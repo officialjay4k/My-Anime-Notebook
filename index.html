@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>My Anime Notebook</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <button id="brandBtn" class="brand" type="button"><span class="brand-mark">◔</span> My Anime Notebook</button>
+      <label class="global-search"><span>⌕</span><input id="globalSearch" type="search" placeholder="Search deep into the void..." /></label>
+      <span id="dbStatus" class="db-status">Local save</span>
+    </header>
+
+    <main class="page-shell">
+      <section id="libraryView" class="view active-view">
+        <div class="page-heading">
+          <div><p class="eyebrow">Your personal archive</p><h1>Your Astral Archive</h1><p class="muted">Everything you watch, remember, and return to.</p></div>
+          <div class="heading-actions"><div id="goalCounter" class="goal-counter"></div><button id="newAnimeBtn" class="primary-btn" type="button">＋ Add anime</button></div>
+        </div>
+        <nav id="statusTabs" class="status-tabs" aria-label="Library filters"></nav>
+        <div id="animeList" class="anime-grid"></div>
+      </section>
+
+      <section id="animeView" class="view">
+        <button id="backToLibraryBtn" class="back-link" type="button">← Back to Library</button>
+        <div id="animeDetail"></div>
+      </section>
+
+      <section id="episodeView" class="view">
+        <button id="backToAnimeBtn" class="back-link" type="button">← Back to Anime</button>
+        <div id="episodeDetail"></div>
+      </section>
+    </main>
+
+    <div id="addAnimeModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close="true"></div>
+      <div class="modal-panel" role="dialog" aria-modal="true">
+        <div class="modal-header"><div><p class="eyebrow">Add to archive</p><h2>Find an anime</h2></div><button id="closeModalBtn" class="icon-btn" type="button" aria-label="Close">×</button></div>
+        <label class="field"><span>Search the database</span><input id="modalSearchInput" type="search" placeholder="Type a title, then press Enter..." autocomplete="off" /><small id="searchStatus" class="search-status">Results appear after 750ms. Press Enter to search now.</small></label>
+        <div id="searchResults" class="search-results"></div>
+        <div id="addDetailStep" class="add-detail-step hidden"></div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
+    <script src="script.js"></script>
+  </body>
+</html>
