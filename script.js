@@ -1,5 +1,8 @@
 const STORAGE_KEY = 'void-anime-notebook';
 const PLANNING_KEY = 'void-anime-planning';
+const PROFILE_KEY = 'void-anime-profile';
+const CONNECTIONS_KEY = 'void-anime-connections';
+const PROFILES = { jordan: { name: 'Jordan', label: 'me' }, ayden: { name: 'Ayden', label: 'friend' } };
 const JIKAN_URL = 'https://api.jikan.moe/v4';
 const ANILIST_URL = 'https://graphql.anilist.co';
 const EPISODE_API_URL = 'https://kitsu.io/api/edge';
@@ -12,6 +15,7 @@ const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
   : null;
 
 const state = {
+  profile: localStorage.getItem(PROFILE_KEY) || 'jordan',
   anime: [],
   filter: 'All',
   query: '',
@@ -39,6 +43,7 @@ const elements = {
   discoveryView: $('#discoveryView'),
   animeView: $('#animeView'),
   episodeView: $('#episodeView'),
+  connectionsView: $('#connectionsView'),
   animeList: $('#animeList'),
   statusTabs: $('#statusTabs'),
   animeDetail: $('#animeDetail'),
@@ -51,8 +56,20 @@ const elements = {
   dbStatus: $('#dbStatus'),
   discoveryList: $('#discoveryList'),
   discoveryStatus: $('#discoveryStatus')
-  ,dashboardContent: $('#dashboardContent'), plannerContent: $('#plannerContent'), calendarContent: $('#calendarContent')
+  ,dashboardContent: $('#dashboardContent'), plannerContent: $('#plannerContent'), calendarContent: $('#calendarContent'), connectionsContent: $('#connectionsContent'), profileSelect: $('#profileSelect')
 };
+
+function profileStorageKey(key) { return `${key}-${state.profile}`; }
+function currentProfile() { return PROFILES[state.profile] || PROFILES.jordan; }
+function readConnections() {
+  try { return JSON.parse(localStorage.getItem(CONNECTIONS_KEY) || '{}'); } catch { return {}; }
+}
+function saveConnections(connections) { localStorage.setItem(CONNECTIONS_KEY, JSON.stringify(connections)); }
+function weekActivity(profile) {
+  const connections = readConnections();
+  const week = connections.competition?.weekKey === getWeekKey() ? connections.competition : null;
+  return week ? Number(week.scores?.[profile] || 0) : 0;
+}
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -123,12 +140,12 @@ function getPlan(weekKey = getWeekKey()) {
 }
 
 function savePlanning() {
-  localStorage.setItem(PLANNING_KEY, JSON.stringify({ plans: state.plans, deferred: state.deferred, milestones: state.milestones, activity: state.activity }));
+  localStorage.setItem(profileStorageKey(PLANNING_KEY), JSON.stringify({ plans: state.plans, deferred: state.deferred, milestones: state.milestones, activity: state.activity }));
 }
 
 function loadPlanning() {
   try {
-    const saved = JSON.parse(localStorage.getItem(PLANNING_KEY) || '{}');
+    const saved = JSON.parse(localStorage.getItem(profileStorageKey(PLANNING_KEY)) || '{}');
     state.plans = Array.isArray(saved.plans) ? saved.plans : [];
     state.deferred = Array.isArray(saved.deferred) ? saved.deferred : [];
     state.milestones = Array.isArray(saved.milestones) && saved.milestones.length ? saved.milestones : [500, 1000];
@@ -171,7 +188,8 @@ function importBackup(file) {
       state.deferred = Array.isArray(backup.deferred) ? backup.deferred : state.deferred;
       state.milestones = Array.isArray(backup.milestones) && backup.milestones.length ? backup.milestones : state.milestones;
       state.activity = Array.isArray(backup.activity) ? backup.activity : state.activity;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.anime));
+      localStorage.setItem(profileStorageKey(STORAGE_KEY), JSON.stringify(state.anime));
+      if (state.profile === 'jordan') localStorage.setItem(STORAGE_KEY, JSON.stringify(state.anime));
       savePlanning();
       setDatabaseStatus('Backup restored');
       renderDashboard(); renderLibrary(); renderPlanner(); renderCalendar();
@@ -264,11 +282,22 @@ function renderCalendar() {
   }).join('') : '<span class="muted">No watch history yet.</span>'}</div></article></div>`;
 }
 
+function renderConnections() {
+  const connections = readConnections();
+  const competition = connections.competition?.weekKey === getWeekKey() ? connections.competition : null;
+  const jordanLibrary = (connections.jordanLibrary || []).map(normalize);
+  const opponent = state.profile === 'jordan' ? 'ayden' : 'jordan';
+  const myScore = competition ? Number(competition.scores?.[state.profile] || 0) : 0;
+  const theirScore = competition ? Number(competition.scores?.[opponent] || 0) : 0;
+  const available = jordanLibrary.filter((item) => !state.anime.some((owned) => String(owned.id) === String(item.id)));
+  elements.connectionsContent.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Jordan + Ayden</p><h1>Connection Deck</h1><p class="muted">Share recommendations and keep a friendly weekly score.</p></div></div><div class="connection-grid"><article class="connection-panel glass-panel"><p class="eyebrow">Weekly competition · ${getWeekKey()}</p><h2>${competition ? 'The race is live' : 'Start the weekly race'}</h2><p class="muted">Both profiles can add episodes. Every completed episode counts once the race starts.</p><div class="scoreboard"><div><span>Jordan</span><strong>${competition ? competition.scores.jordan || 0 : '—'}</strong></div><div><span>Ayden</span><strong>${competition ? competition.scores.ayden || 0 : '—'}</strong></div></div>${competition ? `<p class="connection-result">${myScore === theirScore ? 'Tied up.' : myScore > theirScore ? `You are ahead by ${myScore - theirScore}.` : `${opponent === 'jordan' ? 'Jordan' : 'Ayden'} is ahead by ${theirScore - myScore}.`}</p>` : `<button class="primary-btn" data-start-competition type="button">Start this week's competition</button>`}</article><article class="connection-panel glass-panel"><p class="eyebrow">Jordan's saved orbit</p><h2>${available.length} titles to borrow</h2><p class="muted">${state.profile === 'jordan' ? 'Your friend will see your saved titles here when they switch profiles.' : 'Add one of Jordan\'s saved anime to your own library.'}</p><div class="shared-list">${available.length ? available.slice(0, 8).map((item) => `<div class="shared-item"><img src="${escapeHtml(item.cover)}" alt="" /><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)}</small></span>${state.profile === 'ayden' ? `<button class="ghost-btn" data-borrow-anime="${item.id}" type="button">Add to mine</button>` : ''}</div>`).join('') : '<span class="muted">No new shared titles yet.</span>'}</div></article></div><div class="connection-note glass-panel"><strong>Shared signal</strong><span>Switch profiles any time. Your library, plans, notes, and goals travel with the selected name.</span></div>`;
+}
+
 async function loadAnime() {
   let localAnime = [];
-  try { localAnime = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]').map(normalize); } catch { localAnime = []; }
+  try { localAnime = JSON.parse(localStorage.getItem(profileStorageKey(STORAGE_KEY)) || (state.profile === 'jordan' ? localStorage.getItem(STORAGE_KEY) : '[]') || '[]').map(normalize); } catch { localAnime = []; }
 
-  if (supabaseClient) {
+  if (supabaseClient && state.profile === 'jordan') {
     let { data, error } = await supabaseClient.from('anime_library').select('id,title,cover,status,current_episode,total_episodes,rating,notes,episode_notes,vip,rewatch,updated_at').order('updated_at', { ascending: false });
     if (error && /vip|rewatch|column/i.test(error.message || '')) {
       ({ data, error } = await supabaseClient.from('anime_library').select('id,title,cover,status,current_episode,total_episodes,rating,notes,episode_notes,updated_at').order('updated_at', { ascending: false }));
@@ -294,8 +323,14 @@ async function loadAnime() {
 }
 
 async function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.anime));
-  if (!supabaseClient) {
+  localStorage.setItem(profileStorageKey(STORAGE_KEY), JSON.stringify(state.anime));
+  if (state.profile === 'jordan') localStorage.setItem(STORAGE_KEY, JSON.stringify(state.anime));
+  if (state.profile === 'jordan') {
+    const connections = readConnections();
+    connections.jordanLibrary = state.anime;
+    saveConnections(connections);
+  }
+  if (!supabaseClient || state.profile !== 'jordan') {
     setDatabaseStatus('Local save');
     return true;
   }
@@ -324,7 +359,7 @@ async function persist() {
 }
 
 function showView(view) {
-  [elements.dashboardView, elements.libraryView, elements.plannerView, elements.calendarView, elements.discoveryView, elements.animeView, elements.episodeView].forEach((item) => item.classList.remove('active-view'));
+  [elements.dashboardView, elements.libraryView, elements.plannerView, elements.calendarView, elements.connectionsView, elements.discoveryView, elements.animeView, elements.episodeView].forEach((item) => item.classList.remove('active-view'));
   view.classList.add('active-view');
   document.querySelectorAll('.nav-btn').forEach((item) => item.classList.toggle('active', item.dataset.view === view.id));
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -642,6 +677,7 @@ function bindEvents() {
     if (view === elements.plannerView) renderPlanner();
     if (view === elements.calendarView) renderCalendar();
     if (view === elements.libraryView) renderLibrary();
+    if (view === elements.connectionsView) renderConnections();
   });
   elements.calendarContent.addEventListener('click', (event) => {
     const toggle = event.target.closest('[data-history-toggle]');
@@ -692,6 +728,29 @@ function bindEvents() {
     if (result) openAddModalFromDiscovery(result);
   });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !elements.modal.classList.contains('hidden')) closeAddModal(); });
+
+  elements.connectionsContent.addEventListener('click', async (event) => {
+    if (event.target.closest('[data-start-competition]')) {
+      const connections = readConnections();
+      connections.competition = { weekKey: getWeekKey(), startedAt: new Date().toISOString(), scores: { jordan: 0, ayden: 0 } };
+      saveConnections(connections);
+      renderConnections();
+    }
+    const borrow = event.target.closest('[data-borrow-anime]');
+    if (borrow) {
+      const source = (readConnections().jordanLibrary || []).find((item) => String(item.id) === borrow.dataset.borrowAnime);
+      if (!source) return;
+      state.anime.unshift(normalize({ ...source, id: crypto.randomUUID(), status: 'Plan to Watch', currentEpisode: 0, notes: `Shared by Jordan: ${source.notes || 'No note'}` }));
+      await persist(); renderConnections(); renderLibrary();
+    }
+  });
+  elements.profileSelect.value = state.profile;
+  elements.profileSelect.addEventListener('change', async (event) => {
+    state.profile = event.target.value;
+    localStorage.setItem(PROFILE_KEY, state.profile);
+    await loadAnime(); loadPlanning(); refreshPlanCompletion();
+    renderDashboard(); renderLibrary(); renderPlanner(); renderCalendar(); renderConnections(); showView(elements.dashboardView);
+  });
 }
 
-loadAnime().then(() => { loadPlanning(); refreshPlanCompletion(); bindEvents(); showView(elements.dashboardView); renderDashboard(); renderLibrary(); });
+loadAnime().then(() => { loadPlanning(); refreshPlanCompletion(); bindEvents(); showView(elements.dashboardView); renderDashboard(); renderLibrary(); renderConnections(); });
