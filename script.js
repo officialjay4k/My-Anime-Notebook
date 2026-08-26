@@ -1,9 +1,10 @@
 const STORAGE_KEY = 'void-anime-notebook';
+const PLANNING_KEY = 'void-anime-planning';
 const JIKAN_URL = 'https://api.jikan.moe/v4';
 const ANILIST_URL = 'https://graphql.anilist.co';
 const EPISODE_API_URL = 'https://kitsu.io/api/edge';
 const SEARCH_DELAY = 750;
-const ANIME_GOAL = 1000;
+const ANIME_GOAL = 500;
 const SUPABASE_URL = window.SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || '';
 const supabaseClient = window.supabase && SUPABASE_URL && SUPABASE_ANON_KEY
@@ -14,6 +15,7 @@ const state = {
   anime: [],
   filter: 'All',
   query: '',
+  sort: 'recent',
   searchResults: [],
   discoveryResults: [],
   selectedAnime: null,
@@ -21,12 +23,18 @@ const state = {
   searchTimer: null,
   searchController: null,
   episodeController: null,
-  editingId: null
+  editingId: null,
+  modalReturnFocus: null,
+  historyExpanded: {},
+  plans: [], deferred: [], milestones: [500, 1000], activity: []
 };
 const episodeCache = new Map();
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
+  dashboardView: $('#dashboardView'),
+  plannerView: $('#plannerView'),
+  calendarView: $('#calendarView'),
   libraryView: $('#libraryView'),
   discoveryView: $('#discoveryView'),
   animeView: $('#animeView'),
@@ -43,6 +51,7 @@ const elements = {
   dbStatus: $('#dbStatus'),
   discoveryList: $('#discoveryList'),
   discoveryStatus: $('#discoveryStatus')
+  ,dashboardContent: $('#dashboardContent'), plannerContent: $('#plannerContent'), calendarContent: $('#calendarContent')
 };
 
 function escapeHtml(value) {
@@ -62,8 +71,18 @@ function getTitle(item) {
   return item.title_english || item.title?.english || item.title?.romaji || item.title || 'Unknown title';
 }
 
+function getTitleVariants(item) {
+  return [item.title, item.title_english, item.title?.english, item.title?.romaji, item.title?.native].filter((value) => typeof value === 'string').map((value) => value.toLowerCase());
+}
+
 function getCover(item) {
   return item.cover || item.images?.jpg?.large_image_url || item.images?.jpg?.image_url || item.coverImage?.large || item.coverImage?.medium || '';
+}
+
+function parseRuntime(value) {
+  if (typeof value === 'number') return value;
+  const match = String(value || '').match(/\d+/);
+  return match ? Number(match[0]) : 0;
 }
 
 function normalize(item) {
@@ -75,6 +94,7 @@ function normalize(item) {
     title: getTitle(item),
     cover: getCover(item),
     episodes: Number(item.episodes) || totalEpisodes,
+    totalMinutes: parseRuntime(item.totalMinutes ?? item.duration) || 24,
     currentEpisode: Math.max(0, Number(item.currentEpisode ?? item.current_episode ?? 0)),
     totalEpisodes,
     rating: Math.min(10, Math.max(0, Number(item.rating) || 0)),
@@ -91,11 +111,175 @@ function setDatabaseStatus(text) {
   if (elements.dbStatus) elements.dbStatus.textContent = text;
 }
 
+function getWeekKey(date = new Date()) {
+  const day = new Date(date);
+  const offset = (day.getDay() + 6) % 7;
+  day.setDate(day.getDate() - offset);
+  return day.toISOString().slice(0, 10);
+}
+
+function getPlan(weekKey = getWeekKey()) {
+  return state.plans.find((plan) => plan.weekKey === weekKey);
+}
+
+function savePlanning() {
+  localStorage.setItem(PLANNING_KEY, JSON.stringify({ plans: state.plans, deferred: state.deferred, milestones: state.milestones, activity: state.activity }));
+}
+
+function loadPlanning() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PLANNING_KEY) || '{}');
+    state.plans = Array.isArray(saved.plans) ? saved.plans : [];
+    state.deferred = Array.isArray(saved.deferred) ? saved.deferred : [];
+    state.milestones = Array.isArray(saved.milestones) && saved.milestones.length ? saved.milestones : [500, 1000];
+    state.activity = Array.isArray(saved.activity) ? saved.activity : [];
+  } catch { state.plans = []; state.deferred = []; state.milestones = [500, 1000]; state.activity = []; }
+  archiveMissedPlans();
+}
+
+function archiveMissedPlans() {
+  const currentWeek = getWeekKey();
+  state.plans.forEach((plan) => {
+    if (plan.weekKey >= currentWeek || plan.completed || plan.status === 'deferred') return;
+    plan.status = 'deferred';
+    plan.animeIds.forEach((id) => {
+      const anime = titleById(id);
+      if (anime?.status !== 'Watched' && !state.deferred.includes(id)) state.deferred.push(id);
+    });
+  });
+}
+
+function exportBackup() {
+  const payload = { version: 1, exportedAt: new Date().toISOString(), anime: state.anime, plans: state.plans, deferred: state.deferred, milestones: state.milestones, activity: state.activity };
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+  link.download = `anime-notebook-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function importBackup(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const backup = JSON.parse(reader.result);
+      if (!Array.isArray(backup.anime)) throw new Error('Invalid backup');
+      const existing = new Map(state.anime.map((item) => [String(item.id), item]));
+      backup.anime.map(normalize).forEach((item) => existing.set(String(item.id), item));
+      state.anime = [...existing.values()];
+      state.plans = Array.isArray(backup.plans) ? backup.plans : state.plans;
+      state.deferred = Array.isArray(backup.deferred) ? backup.deferred : state.deferred;
+      state.milestones = Array.isArray(backup.milestones) && backup.milestones.length ? backup.milestones : state.milestones;
+      state.activity = Array.isArray(backup.activity) ? backup.activity : state.activity;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state.anime));
+      savePlanning();
+      setDatabaseStatus('Backup restored');
+      renderDashboard(); renderLibrary(); renderPlanner(); renderCalendar();
+    } catch { setDatabaseStatus('Backup invalid'); }
+  };
+  reader.readAsText(file);
+}
+
+function planProgress(plan) {
+  const completed = (plan?.animeIds || []).filter((id) => state.anime.find((item) => String(item.id) === String(id))?.status === 'Watched').length;
+  return { completed, target: Math.max(1, Number(plan?.target) || 1), percent: Math.min(100, completed / Math.max(1, Number(plan?.target) || 1) * 100) };
+}
+
+function refreshPlanCompletion() {
+  state.plans.forEach((plan) => { plan.completed = planProgress(plan).completed >= planProgress(plan).target; });
+  savePlanning();
+}
+
+function titleById(id) { return state.anime.find((item) => String(item.id) === String(id)); }
+
+function renderDashboard() {
+  const plan = getPlan();
+  const progress = planProgress(plan);
+  const watched = state.anime.filter((item) => item.status === 'Watched').length;
+  const watchedHours = state.anime.reduce((total, item) => total + (item.status === 'Watched' ? getWatchHours(item) : item.currentEpisode / (item.totalEpisodes || 1) * getWatchHours(item)), 0);
+  const watching = state.anime.filter((item) => item.status === 'Watching');
+  const nextMilestone = state.milestones.find((milestone) => milestone > watched) || watched;
+  const completedWeeks = state.plans.filter((item) => item.completed).length;
+  elements.dashboardContent.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Personal command center</p><h1>Your Watch Orbit</h1><p class="muted">A calm view of your weekly momentum and the long journey ahead.</p></div><div class="heading-actions"><button class="primary-btn" data-view="plannerView" type="button">Plan this week</button></div></div><div class="backup-tools glass-panel"><div><p class="eyebrow">Data safety</p><strong>Protect your archive</strong><p class="muted">Export saves your anime, plans, streak history, and deferred list. Import merges a backup by title ID.</p></div><div class="backup-actions"><button class="ghost-btn" data-export-backup type="button">Export backup</button><button class="ghost-btn" data-import-backup type="button">Import backup</button><input id="backupFile" class="hidden" type="file" accept="application/json" /></div></div><div class="dashboard-grid"><article class="dashboard-hero glass-panel"><p class="eyebrow">This week's mission</p><h2>${plan ? `${progress.completed} of ${progress.target} anime finished` : 'No mission planned yet'}</h2><p class="muted">${plan ? 'Finish your selected titles to protect the streak.' : 'Choose a few titles and give the week a shape.'}</p><div class="mission-track"><span style="width:${progress.percent}%"></span></div><strong>${Math.round(progress.percent)}% complete</strong></article><article class="stat-panel"><span>Current streak</span><strong>${currentStreak()} weeks</strong><small>${completedWeeks} completed weeks</small></article><article class="stat-panel"><span>Archive progress</span><strong>${watched.toLocaleString()}</strong><small>Next milestone: ${nextMilestone.toLocaleString()}</small></article><article class="stat-panel"><span>Time in orbit</span><strong>${formatHours(watchedHours)}</strong><small>Estimated from episode runtimes</small></article></div><section class="dashboard-section"><div class="section-title"><h2>Continue watching</h2><span>${watching.length} active</span></div><div class="continue-list">${watching.length ? watching.slice(0, 6).map((item) => `<button class="continue-item" data-open-anime="${item.id}" type="button"><img src="${escapeHtml(item.cover)}" alt="" /><span><strong>${escapeHtml(item.title)}</strong><small>Episode ${item.currentEpisode} of ${item.totalEpisodes} · ${formatHours(getWatchHours(item))} total</small></span></button>`).join('') : '<div class="empty-state"><strong>Your orbit is quiet</strong><span>Add a title to start watching.</span></div>'}</div></section><section class="dashboard-section dashboard-columns"><div><div class="section-title"><h2>Backup list</h2><span>${state.deferred.length} deferred</span></div><p class="muted">Titles here are waiting for a future weekly plan, never forgotten.</p></div><div><div class="section-title"><h2>Milestones</h2><span>${state.milestones.join(' · ')}</span></div><label class="milestone-add"><input id="milestoneInput" type="number" min="1" placeholder="Add target" /><button class="ghost-btn" data-add-milestone type="button">Add</button></label></div></section><section class="dashboard-section"><div class="section-title"><h2>Recent activity</h2><span>${state.activity.length} logged episodes</span></div><div class="activity-list">${state.activity.slice(0, 5).map((entry) => `<div><strong>${escapeHtml(titleById(entry.animeId)?.title || 'Unknown title')}</strong><span>Episode ${entry.episode} · ${new Date(entry.date).toLocaleDateString()}</span></div>`).join('') || '<p class="muted">Your manual episode updates will appear here.</p>'}</div></section>`;
+}
+
+function currentStreak() {
+  let streak = 0;
+  const cursor = new Date();
+  cursor.setDate(cursor.getDate() - ((cursor.getDay() + 6) % 7));
+  while (state.plans.some((plan) => plan.weekKey === getWeekKey(cursor) && plan.completed)) { streak += 1; cursor.setDate(cursor.getDate() - 7); }
+  return streak;
+}
+
+function renderPlanner() {
+  const weekKey = getWeekKey();
+  const plan = getPlan(weekKey) || { weekKey, target: 1, animeIds: [] };
+  const selectable = state.anime.filter((item) => item.status !== 'Watched');
+  elements.plannerContent.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Weekly ritual · ${weekKey}</p><h1>Shape the Week</h1><p class="muted">Pick the anime you want to finish, then let your progress tell the story.</p></div><button class="primary-btn" data-save-plan type="button">Save weekly plan</button></div><div class="planner-layout"><article class="planner-form glass-panel"><label class="field">Anime to finish this week<select id="weeklyTarget"><option value="1" ${plan.target === 1 ? 'selected' : ''}>1 anime</option><option value="2" ${plan.target === 2 ? 'selected' : ''}>2 anime</option><option value="3" ${plan.target === 3 ? 'selected' : ''}>3 anime</option></select></label><div class="planner-options">${selectable.length ? selectable.map((item) => `<label class="plan-option"><input type="checkbox" data-plan-anime value="${item.id}" ${plan.animeIds.includes(item.id) ? 'checked' : ''} /><img src="${escapeHtml(item.cover)}" alt="" /><span><strong>${escapeHtml(item.title)}</strong><small>${item.currentEpisode}/${item.totalEpisodes} episodes</small></span></label>`).join('') : '<div class="empty-state">Add some unfinished anime before planning a week.</div>'}</div></article><aside class="backup-panel glass-panel"><p class="eyebrow">Backup orbit</p><h2>${state.deferred.length} deferred titles</h2><p class="muted">Swap these back into a future week whenever the timing feels right.</p><div class="backup-list">${state.deferred.length ? state.deferred.map((id) => `<div>${escapeHtml(titleById(id)?.title || 'Unknown title')}<button data-restore-deferred="${id}" type="button">Restore</button></div>`).join('') : '<span class="muted">Nothing waiting.</span>'}</div></aside></div>`;
+  plan.animeIds.forEach((id) => { if (!state.anime.some((item) => item.id === id)) plan.animeIds = plan.animeIds.filter((savedId) => savedId !== id); });
+}
+
+function formatHistoryDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Recently';
+  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }).format(date);
+}
+
+function getHistoryGroups() {
+  const grouped = new Map();
+
+  [...state.activity]
+    .filter((entry) => entry && entry.animeId && entry.date)
+    .sort((first, second) => new Date(second.date) - new Date(first.date))
+    .forEach((entry) => {
+      const id = String(entry.animeId);
+      const title = entry.title || titleById(id)?.title || 'Unknown title';
+      if (!grouped.has(id)) {
+        grouped.set(id, { id, title, entries: [] });
+      }
+      grouped.get(id).entries.push({
+        episode: Number(entry.episode) || 1,
+        date: entry.date,
+        dateLabel: formatHistoryDate(entry.date)
+      });
+    });
+
+  return [...grouped.values()].map((group) => ({
+    ...group,
+    entries: group.entries.slice(0, 6)
+  }));
+}
+
+function renderCalendar() {
+  const weekKey = getWeekKey();
+  const plan = getPlan(weekKey) || { weekKey, animeIds: [] };
+  const plannedAnime = (plan.animeIds || []).map((id) => titleById(id)).filter(Boolean);
+  const history = getHistoryGroups();
+
+  elements.calendarContent.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Consistency archive</p><h1>Orbit History</h1><p class="muted">This week’s watchlist and your recent viewing timeline.</p></div></div><div class="streak-summary glass-panel"><strong>${currentStreak()} week current streak</strong><span>${state.plans.filter((item) => item.completed).length} completed weeks · ${plannedAnime.length} planned titles this week</span></div><div class="calendar-grid"><article class="month-panel"><h2>This week</h2><div class="month-weeks">${plannedAnime.length ? plannedAnime.map((item) => `<div class="calendar-week complete"><span>${weekKey}</span><strong>${escapeHtml(item.title)}</strong><small>${item.currentEpisode}/${item.totalEpisodes} episodes watched</small></div>`).join('') : '<span class="muted">No anime planned for this week.</span>'}</div></article><article class="month-panel"><h2>Watch history</h2><div class="month-weeks">${history.length ? history.map((group) => {
+    const expanded = Boolean(state.historyExpanded[group.id]);
+    const visibleEntries = expanded ? group.entries : group.entries.slice(0, 3);
+    const hiddenCount = Math.max(0, group.entries.length - visibleEntries.length);
+    return `<div class="calendar-week active history-group"><span>${group.entries.length} log${group.entries.length === 1 ? '' : 's'}</span><strong>${escapeHtml(group.title)}</strong><div class="history-episode-list">${visibleEntries.map((entry) => `<small>Ep ${entry.episode} · ${escapeHtml(entry.dateLabel)}</small>`).join('')}${hiddenCount > 0 ? `<button class="history-toggle" data-history-toggle="${escapeHtml(group.id)}" type="button">${expanded ? 'Show less' : `Show all (${hiddenCount})`}</button>` : ''}${expanded && group.entries.length > visibleEntries.length ? '<button class="history-toggle" data-history-toggle="' + escapeHtml(group.id) + '" type="button">Show less</button>' : ''}</div></div>`;
+  }).join('') : '<span class="muted">No watch history yet.</span>'}</div></article></div>`;
+}
+
 async function loadAnime() {
+  let localAnime = [];
+  try { localAnime = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]').map(normalize); } catch { localAnime = []; }
+
   if (supabaseClient) {
-    const { data, error } = await supabaseClient.from('anime_library').select('id,title,cover,status,current_episode,total_episodes,rating,notes,episode_notes,updated_at').order('updated_at', { ascending: false });
+    let { data, error } = await supabaseClient.from('anime_library').select('id,title,cover,status,current_episode,total_episodes,rating,notes,episode_notes,vip,rewatch,updated_at').order('updated_at', { ascending: false });
+    if (error && /vip|rewatch|column/i.test(error.message || '')) {
+      ({ data, error } = await supabaseClient.from('anime_library').select('id,title,cover,status,current_episode,total_episodes,rating,notes,episode_notes,updated_at').order('updated_at', { ascending: false }));
+    }
     if (!error && Array.isArray(data)) {
-      state.anime = data.map(normalize);
+      const localById = new Map(localAnime.map((item) => [String(item.id), item]));
+      state.anime = data.map((item) => {
+        const remote = normalize(item);
+        const local = localById.get(String(remote.id));
+        return { ...remote, vip: Boolean(remote.vip || local?.vip), rewatch: Boolean(remote.rewatch || local?.rewatch) };
+      });
       setDatabaseStatus('Supabase live');
       return;
     }
@@ -103,7 +287,7 @@ async function loadAnime() {
   }
 
   try {
-    state.anime = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]').map(normalize);
+    state.anime = localAnime;
   } catch {
     state.anime = [];
   }
@@ -140,8 +324,9 @@ async function persist() {
 }
 
 function showView(view) {
-  [elements.libraryView, elements.discoveryView, elements.animeView, elements.episodeView].forEach((item) => item.classList.remove('active-view'));
+  [elements.dashboardView, elements.libraryView, elements.plannerView, elements.calendarView, elements.discoveryView, elements.animeView, elements.episodeView].forEach((item) => item.classList.remove('active-view'));
   view.classList.add('active-view');
+  document.querySelectorAll('.nav-btn').forEach((item) => item.classList.toggle('active', item.dataset.view === view.id));
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -153,16 +338,18 @@ async function fetchDiscovery() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({
-        query: 'query($page:Int){ Page(page:$page, perPage:12) { media(type:ANIME, sort:POPULARITY_DESC, isAdult:false, status_in:[FINISHED, RELEASING]) { id title { romaji english } coverImage { large medium } episodes averageScore genres } } }',
+        query: 'query($page:Int){ Page(page:$page, perPage:12) { media(type:ANIME, sort:POPULARITY_DESC, isAdult:false, status_in:[FINISHED, RELEASING]) { id title { romaji english native } coverImage { large medium } episodes duration averageScore genres } } }',
         variables: { page: Math.floor(Math.random() * 40) + 1 }
       })
     });
     if (!response.ok) throw new Error('Discovery request failed');
     const data = await response.json();
-    const results = (data.data?.Page?.media || []).map(normalize);
+    const ownedIds = new Set(state.anime.map((item) => String(item.id)));
+    const ownedTitles = new Set(state.anime.flatMap(getTitleVariants));
+    const results = (data.data?.Page?.media || []).map(normalize).filter((item) => !ownedIds.has(String(item.id)) && !getTitleVariants(item).some((title) => ownedTitles.has(title)));
     state.discoveryResults = results;
     elements.discoveryStatus.textContent = `${results.length} random titles found`;
-    elements.discoveryList.innerHTML = results.map((item) => `<article class="discovery-card"><img src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><div><h2>${escapeHtml(item.title)}</h2><p>${item.episodes || '?'} episodes${item.averageScore ? ` · ${item.averageScore}% score` : ''}</p><button class="discover-add" data-discover-id="${item.id}" type="button">Add to notebook</button></div></article>`).join('');
+    elements.discoveryList.innerHTML = results.map((item) => `<article class="discovery-card"><img src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><div><h2>${escapeHtml(item.title)}</h2><p>${item.episodes || '?'} episodes${item.averageScore ? ` · ${item.averageScore}% score` : ''}${item.totalMinutes ? ` · ${formatHours(item.totalMinutes / 60)}` : ''}</p><button class="discover-add" data-discover-id="${item.id}" type="button">Add to notebook</button></div></article>`).join('');
   } catch (error) {
     console.error('Discovery request failed:', error);
     elements.discoveryStatus.textContent = 'Discovery is temporarily unavailable.';
@@ -179,6 +366,16 @@ function statusClass(status) {
   return { Watching: 'watching', Watched: 'watched', Dropped: 'dropped', 'Plan to Watch': 'planned' }[status] || 'watching';
 }
 
+function formatHours(hours) {
+  if (!Number.isFinite(hours) || hours <= 0) return 'Time unknown';
+  return `${hours < 10 ? hours.toFixed(1) : Math.round(hours)} hr${hours === 1 ? '' : 's'}`;
+}
+
+function getWatchHours(item) {
+  const minutes = Number(item.duration ?? item.totalMinutes) || 24;
+  return (Number(item.totalEpisodes) || 1) * (Number(item.totalMinutes) || minutes) / 60;
+}
+
 function renderStars(rating, interactive = false) {
   return Array.from({ length: 10 }, (_, index) => {
     const number = index + 1;
@@ -190,8 +387,13 @@ function renderStars(rating, interactive = false) {
 
 function renderLibrary() {
   const statuses = ['All', 'Watching', 'Watched', 'Plan to Watch', 'Dropped'];
-  elements.statusTabs.innerHTML = statuses.map((status) => `<button class="status-tab ${state.filter === status ? 'active' : ''}" data-status="${status}" type="button">${status}</button>`).join('');
-  const visible = state.anime.filter((item) => (state.filter === 'All' || item.status === state.filter) && `${item.title} ${item.notes}`.toLowerCase().includes(state.query.toLowerCase()));
+  elements.statusTabs.innerHTML = `${statuses.map((status) => `<button class="status-tab ${state.filter === status ? 'active' : ''}" data-status="${status}" type="button">${status}</button>`).join('')}<label class="sort-control">Sort<select id="librarySort"><option value="recent" ${state.sort === 'recent' ? 'selected' : ''}>Recently added</option><option value="title" ${state.sort === 'title' ? 'selected' : ''}>Title</option><option value="progress" ${state.sort === 'progress' ? 'selected' : ''}>Progress</option><option value="rating" ${state.sort === 'rating' ? 'selected' : ''}>Rating</option></select></label>`;
+  const visible = state.anime.filter((item) => (state.filter === 'All' || item.status === state.filter) && `${item.title} ${item.notes}`.toLowerCase().includes(state.query.toLowerCase())).sort((first, second) => {
+    if (state.sort === 'title') return first.title.localeCompare(second.title);
+    if (state.sort === 'progress') return (second.currentEpisode / second.totalEpisodes) - (first.currentEpisode / first.totalEpisodes);
+    if (state.sort === 'rating') return second.rating - first.rating;
+    return 0;
+  });
   const watchedCount = state.anime.filter((item) => item.status === 'Watched').length;
   $('#goalCounter').innerHTML = `<span class="goal-label">Anime goal</span><strong>${watchedCount.toLocaleString()} <small>/ ${ANIME_GOAL.toLocaleString()}</small></strong><span class="goal-track"><i style="width:${Math.min(100, watchedCount / ANIME_GOAL * 100)}%"></i></span>`;
 
@@ -210,12 +412,38 @@ function renderLibrary() {
         ${item.vip ? '<span class="vip-badge">VIP</span>' : ''}${item.rewatch ? '<span class="rewatch-badge">REWATCH</span>' : ''}
       </button>
       <div class="card-copy"><div class="card-title-row"><h2>${escapeHtml(item.title)}</h2>${item.vip ? '<span class="vip-mark">✦</span>' : ''}</div>
-        <div class="stars">${renderStars(item.rating)}</div><p>${escapeHtml(item.notes || 'No notes yet.')}</p>
+        ${isRateableStatus(item.status) ? `<div class="stars" aria-label="${item.rating} out of 10 stars">${renderStars(item.rating)}</div>` : ''}<p>${escapeHtml(item.notes || 'No notes yet.')}</p>
         <div class="progress"><span style="width:${progress}%"></span></div>
-        <div class="card-actions"><button class="edit-card-button" data-edit-anime="${item.id}" type="button">Edit details</button><button class="remove-card-button" data-remove-anime="${item.id}" type="button">Remove</button></div>
+        <div class="card-meta"><span>${formatHours(getWatchHours(item))} total</span><span>${formatHours(item.currentEpisode / total * getWatchHours(item))} watched</span></div><div class="card-actions ${item.status === 'Watched' ? 'compact' : ''}">${item.status !== 'Watched' ? `<button class="quick-episode-button" data-increment-anime="${item.id}" type="button">＋1 episode</button>` : ''}<button class="edit-card-button" data-edit-anime="${item.id}" type="button">Edit details</button><button class="remove-card-button" data-remove-anime="${item.id}" type="button">Remove</button></div>
       </div>
     </article>`;
   }).join('');
+}
+
+function isRateableStatus(status) {
+  return status === 'Watched' || status === 'Dropped';
+}
+
+async function incrementEpisode(item) {
+  if (!item || item.status === 'Watched') return;
+  if (item.status === 'Dropped') item.status = 'Watching';
+  item.currentEpisode = Math.min(item.totalEpisodes, item.currentEpisode + 1);
+  state.activity.unshift({ animeId: item.id, title: item.title, episode: item.currentEpisode, date: new Date().toISOString() });
+  state.activity = state.activity.slice(0, 5000);
+  const completed = item.status === 'Watching' && item.currentEpisode >= item.totalEpisodes;
+  if (completed) item.status = 'Watched';
+  await persist();
+  refreshPlanCompletion();
+  renderLibrary();
+  renderDashboard();
+  renderCalendar();
+  if (completed) openCompletionForm(item);
+}
+
+function openCompletionForm(item) {
+  state.editingId = item.id;
+  openAddModal(item);
+  elements.addDetailStep.querySelector('.add-detail')?.insertAdjacentHTML('afterbegin', '<p class="completion-message">You reached the final episode. Add your rating and closing notes.</p>');
 }
 
 async function searchAnime(query) {
@@ -231,7 +459,7 @@ async function searchAnime(query) {
   } catch (error) {
     if (error.name === 'AbortError') return;
     try {
-      const response = await fetch(ANILIST_URL, { method: 'POST', signal: state.searchController.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'query($search:String){Page(page:1,perPage:8){media(search:$search,type:ANIME,isAdult:false){id title{romaji english} coverImage{large medium} episodes}}}', variables: { search: value } }) });
+      const response = await fetch(ANILIST_URL, { method: 'POST', signal: state.searchController.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: 'query($search:String){Page(page:1,perPage:8){media(search:$search,type:ANIME,isAdult:false){id title{romaji english native} coverImage{large medium} episodes duration}}}', variables: { search: value } }) });
       const data = await response.json();
       state.searchResults = (data.data?.Page?.media || []).map(normalize);
     } catch { state.searchResults = []; }
@@ -241,7 +469,19 @@ async function searchAnime(query) {
 }
 
 function makeAddForm(item) {
-  return `<div class="add-detail"><button class="back-link" data-add-back type="button">← Change anime</button><div class="selected-preview"><img src="${escapeHtml(item.cover)}" alt="" /><div><p class="eyebrow">Selected title</p><h2>${escapeHtml(item.title)}</h2></div></div><div class="form-grid"><label class="field">Status<select id="addStatus"><option>Watching</option><option>Watched</option><option>Dropped</option><option>Plan to Watch</option></select></label><label class="field">On episode<input id="addEpisode" type="number" min="0" value="0" /></label><label class="field full">Rating<div id="addRating" class="star-rating">${renderStars(0, true)}</div></label><label class="vip-toggle full"><input id="addVip" type="checkbox" /> Mark as VIP anime</label><label class="vip-toggle full"><input id="addRewatch" type="checkbox" /> Mark for Rewatch</label><label class="field full">Notes<textarea id="addNotes" rows="3" placeholder="Write a note about this anime..."></textarea></label></div><button id="commitAnime" class="primary-btn wide" type="button">Commit to Library</button></div>`;
+  return `<div class="add-detail"><button class="back-link" data-add-back type="button">← Change anime</button><div class="selected-preview"><img src="${escapeHtml(item.cover)}" alt="" /><div><p class="eyebrow">Selected title</p><h2>${escapeHtml(item.title)}</h2></div></div><div class="form-grid"><label class="field">Status<select id="addStatus"><option>Watching</option><option>Watched</option><option>Dropped</option><option>Plan to Watch</option></select></label><label class="field">On episode<input id="addEpisode" type="number" min="0" value="0" /></label><label id="addRatingField" class="field rating-field">Rating<div id="addRating" class="star-rating rating-disabled" aria-disabled="true">${renderStars(0, true)}</div><small id="ratingHint" class="rating-hint">Available when watched or dropped</small></label><label class="vip-toggle full"><input id="addVip" type="checkbox" /> Mark as VIP anime</label><label class="vip-toggle full"><input id="addRewatch" type="checkbox" /> Mark for Rewatch</label><label class="field full">Notes<textarea id="addNotes" rows="3" placeholder="Write a note about this anime..."></textarea></label></div><button id="commitAnime" class="primary-btn wide" type="button">Commit to Library</button></div>`;
+}
+
+function updateRatingAvailability() {
+  const rating = $('#addRating');
+  const status = $('#addStatus')?.value;
+  if (!rating || !status) return;
+  const enabled = status === 'Watched' || status === 'Dropped';
+  $('#addRatingField')?.classList.toggle('hidden', !enabled);
+  rating.classList.toggle('rating-disabled', !enabled);
+  rating.setAttribute('aria-disabled', String(!enabled));
+  const hint = $('#ratingHint');
+  if (hint) hint.textContent = enabled ? 'Select up to 10 stars' : 'Available when watched or dropped';
 }
 
 function normalizeEpisode(episode) {
@@ -293,7 +533,7 @@ function episodeRows(item, episodes) {
 async function renderAnimeDetail(item) {
   state.selectedAnime = item;
   showView(elements.animeView);
-    elements.animeDetail.innerHTML = `<div class="anime-hero"><img class="hero-poster" src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><div class="hero-copy"><div class="hero-title-row"><span class="status-pill ${statusClass(item.status)}">${escapeHtml(item.status)}</span>${item.vip ? '<span class="vip-badge inline">VIP</span>' : ''}${item.rewatch ? '<span class="rewatch-badge inline">REWATCH</span>' : ''}</div><h1>${escapeHtml(item.title)}</h1><p class="muted">${item.totalEpisodes || item.episodes || '?'} episodes · Your personal record</p><p>${escapeHtml(item.notes || 'No notes yet.')}</p><div class="stars large">${renderStars(item.rating)}</div><div class="hero-controls"><label>On episode<input id="heroEpisode" type="number" min="0" max="${item.totalEpisodes}" value="${item.currentEpisode}" /></label><button id="editAnimeButton" class="ghost-btn" type="button">Edit details</button><button id="openChronicles" class="primary-btn" type="button">Open episode chronicles</button></div></div></div><section class="chronicle-preview"><div class="section-title"><h2>Chronological Logs</h2><span id="episodeLoading">Loading episodes...</span></div><div id="heroEpisodes" class="episode-list"><div class="episode-loading">Fetching episode list and previews...</div></div></section>`;
+    elements.animeDetail.innerHTML = `<div class="anime-hero"><img class="hero-poster" src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><div class="hero-copy"><div class="hero-title-row"><span class="status-pill ${statusClass(item.status)}">${escapeHtml(item.status)}</span>${item.vip ? '<span class="vip-badge inline">VIP</span>' : ''}${item.rewatch ? '<span class="rewatch-badge inline">REWATCH</span>' : ''}</div><h1>${escapeHtml(item.title)}</h1><p class="muted">${item.totalEpisodes || item.episodes || '?'} episodes · ${formatHours(getWatchHours(item))} total · ${formatHours(item.currentEpisode / (item.totalEpisodes || 1) * getWatchHours(item))} watched</p><p>${escapeHtml(item.notes || 'No notes yet.')}</p>${isRateableStatus(item.status) ? `<div class="stars large" aria-label="${item.rating} out of 10 stars">${renderStars(item.rating)}</div>` : ''}<div class="hero-controls"><label>On episode<input id="heroEpisode" type="number" min="0" max="${item.totalEpisodes}" value="${item.currentEpisode}" /></label><button id="editAnimeButton" class="ghost-btn" type="button">Edit details</button><button id="openChronicles" class="primary-btn" type="button">Open episode chronicles</button></div></div></div><section class="chronicle-preview"><div class="section-title"><h2>Chronological Logs</h2><span id="episodeLoading">Loading episodes...</span></div><div id="heroEpisodes" class="episode-list"><div class="episode-loading">Fetching episode list and previews...</div></div></section>`;
   const episodes = await fetchEpisodes(item);
   item.loadedEpisodes = episodes;
   $('#episodeLoading').textContent = episodes.length ? `${episodes.length} episodes` : 'No episode data';
@@ -363,37 +603,85 @@ function openAddModal(editingItem = null) {
 
 function bindAddForm(item) {
   $('[data-add-back]')?.addEventListener('click', () => { state.editingId = null; elements.addDetailStep.classList.add('hidden'); elements.searchResults.classList.remove('hidden'); elements.modalInput.parentElement.classList.remove('hidden'); });
-  $('#addRating')?.addEventListener('click', (event) => { if (!event.target.dataset.rating) return; const rating = Number(event.target.dataset.rating); $('#addRating').dataset.value = rating; $('#addRating').innerHTML = renderStars(rating, true); });
-  $('#addStatus')?.addEventListener('change', (event) => { if (event.target.value === 'Watched') $('#addEpisode').value = item.totalEpisodes || item.episodes || 1; });
+  $('#addRating')?.addEventListener('click', (event) => { if ($('#addRating').classList.contains('rating-disabled')) return; if (!event.target.dataset.rating) return; const rating = Number(event.target.dataset.rating); $('#addRating').dataset.value = rating; $('#addRating').innerHTML = renderStars(rating, true); });
+  $('#addStatus')?.addEventListener('change', (event) => { if (event.target.value === 'Watched') $('#addEpisode').value = item.totalEpisodes || item.episodes || 1; if (event.target.value !== 'Watched' && event.target.value !== 'Dropped') { $('#addRating').dataset.value = '0'; $('#addRating').innerHTML = renderStars(0, true); } updateRatingAvailability(); });
+  updateRatingAvailability();
   $('#commitAnime')?.addEventListener('click', async () => {
-    const record = normalize({ ...item, id: state.editingId || crypto.randomUUID(), status: $('#addStatus').value, currentEpisode: Number($('#addEpisode').value) || 0, totalEpisodes: item.totalEpisodes || item.episodes || 1, rating: Number($('#addRating').dataset.value) || 0, vip: $('#addVip').checked, rewatch: $('#addRewatch').checked, notes: $('#addNotes').value.trim() });
+    const status = $('#addStatus').value;
+    const record = normalize({ ...item, id: state.editingId || crypto.randomUUID(), status, currentEpisode: Number($('#addEpisode').value) || 0, totalEpisodes: item.totalEpisodes || item.episodes || 1, rating: isRateableStatus(status) ? Number($('#addRating').dataset.value) || 0 : 0, vip: $('#addVip').checked, rewatch: $('#addRewatch').checked, notes: $('#addNotes').value.trim() });
     if (record.status === 'Watched') record.currentEpisode = record.totalEpisodes;
     record.currentEpisode = Math.min(record.totalEpisodes, Math.max(0, record.currentEpisode));
     const index = state.anime.findIndex((existing) => existing.id === record.id);
     if (index >= 0) state.anime[index] = { ...state.anime[index], ...record, episodeNotes: state.anime[index].episodeNotes || {} };
     else state.anime.unshift(record);
+    if (record.status === 'Watched' || record.currentEpisode > 0) {
+      state.activity.unshift({ animeId: record.id, title: record.title, episode: record.currentEpisode, date: new Date().toISOString() });
+      state.activity = state.activity.slice(0, 5000);
+    }
     await persist();
+    refreshPlanCompletion();
     closeAddModal();
     renderLibrary();
+    renderDashboard();
+    renderCalendar();
     showView(elements.libraryView);
   });
 }
 
-function closeAddModal() { elements.modal.classList.add('hidden'); elements.modal.setAttribute('aria-hidden', 'true'); state.editingId = null; }
+function closeAddModal() { elements.modal.classList.add('hidden'); elements.modal.setAttribute('aria-hidden', 'true'); state.editingId = null; state.modalReturnFocus?.focus(); state.modalReturnFocus = null; }
 
 function bindEvents() {
+  document.querySelector('.site-nav').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-view]');
+    if (!button) return;
+    const view = document.getElementById(button.dataset.view);
+    if (!view) return;
+    document.querySelectorAll('.nav-btn').forEach((item) => item.classList.toggle('active', item === button));
+    showView(view);
+    if (view === elements.dashboardView) renderDashboard();
+    if (view === elements.plannerView) renderPlanner();
+    if (view === elements.calendarView) renderCalendar();
+    if (view === elements.libraryView) renderLibrary();
+  });
+  elements.calendarContent.addEventListener('click', (event) => {
+    const toggle = event.target.closest('[data-history-toggle]');
+    if (!toggle) return;
+    const id = String(toggle.dataset.historyToggle);
+    state.historyExpanded[id] = !state.historyExpanded[id];
+    renderCalendar();
+  });
+  elements.dashboardContent.addEventListener('click', (event) => { const button = event.target.closest('[data-open-anime]'); const viewButton = event.target.closest('[data-view]'); if (button) renderAnimeDetail(titleById(button.dataset.openAnime)); if (viewButton) document.querySelector(`.nav-btn[data-view="${viewButton.dataset.view}"]`)?.click(); });
+  elements.dashboardContent.addEventListener('click', (event) => { if (event.target.closest('[data-export-backup]')) exportBackup(); if (event.target.closest('[data-import-backup]')) $('#backupFile').click(); if (event.target.closest('[data-add-milestone]')) { const value = Number($('#milestoneInput').value); if (value > 0 && !state.milestones.includes(value)) { state.milestones.push(value); state.milestones.sort((first, second) => first - second); savePlanning(); renderDashboard(); } } });
+  elements.dashboardContent.addEventListener('change', (event) => { if (event.target.id === 'backupFile' && event.target.files[0]) importBackup(event.target.files[0]); });
+  elements.plannerContent.addEventListener('click', (event) => {
+    const save = event.target.closest('[data-save-plan]');
+    const restore = event.target.closest('[data-restore-deferred]');
+    if (restore) { state.deferred = state.deferred.filter((id) => String(id) !== restore.dataset.restoreDeferred); savePlanning(); renderPlanner(); return; }
+    if (save) {
+      const weekKey = getWeekKey();
+      const plan = getPlan(weekKey) || { weekKey, animeIds: [] };
+      plan.target = Number($('#weeklyTarget').value) || 1;
+      plan.animeIds = [...document.querySelectorAll('[data-plan-anime]:checked')].map((input) => input.value);
+      plan.completed = planProgress(plan).completed >= plan.target;
+      if (!getPlan(weekKey)) state.plans.push(plan);
+      savePlanning();
+      save.textContent = 'Plan saved';
+      renderDashboard();
+    }
+  });
   $('#brandBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#discoverBtn').addEventListener('click', openDiscovery);
   $('#discoveryBackBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#refreshDiscoveryBtn').addEventListener('click', fetchDiscovery);
-  $('#newAnimeBtn').addEventListener('click', () => { state.editingId = null; elements.modal.classList.remove('hidden'); elements.modalInput.value = ''; elements.searchResults.innerHTML = ''; elements.searchResults.classList.remove('hidden'); elements.addDetailStep.classList.add('hidden'); elements.modalInput.parentElement.classList.remove('hidden'); elements.searchStatus.textContent = 'Results appear after 750ms. Press Enter to search now.'; elements.modalInput.focus(); });
+  $('#newAnimeBtn').addEventListener('click', (event) => { state.modalReturnFocus = event.currentTarget; state.editingId = null; elements.modal.classList.remove('hidden'); elements.modal.setAttribute('aria-hidden', 'false'); elements.modalInput.value = ''; elements.searchResults.innerHTML = ''; elements.searchResults.classList.remove('hidden'); elements.addDetailStep.classList.add('hidden'); elements.modalInput.parentElement.classList.remove('hidden'); elements.searchStatus.textContent = 'Results appear after 750ms. Press Enter to search now.'; elements.modalInput.focus(); });
   $('#closeModalBtn').addEventListener('click', closeAddModal);
   document.querySelector('[data-close="true"]').addEventListener('click', closeAddModal);
   $('#backToLibraryBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#backToAnimeBtn').addEventListener('click', () => { if (state.selectedAnime) renderAnimeDetail(state.selectedAnime); else { showView(elements.libraryView); renderLibrary(); } });
   $('#globalSearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); });
   elements.statusTabs.addEventListener('click', (event) => { if (event.target.dataset.status) { state.filter = event.target.dataset.status; renderLibrary(); } });
-  elements.animeList.addEventListener('click', async (event) => { const open = event.target.closest('[data-open-anime]'); const edit = event.target.closest('[data-edit-anime]'); const remove = event.target.closest('[data-remove-anime]'); if (open) renderAnimeDetail(state.anime.find((item) => String(item.id) === open.dataset.openAnime)); if (edit) openEditForm(state.anime.find((item) => String(item.id) === edit.dataset.editAnime)); if (remove) { const item = state.anime.find((anime) => String(anime.id) === remove.dataset.removeAnime); if (!item || !window.confirm(`Remove ${item.title} from your archive?`)) return; state.anime = state.anime.filter((anime) => anime.id !== item.id); if (supabaseClient) await supabaseClient.from('anime_library').delete().eq('id', item.id); await persist(); renderLibrary(); } });
+  elements.statusTabs.addEventListener('change', (event) => { if (event.target.id === 'librarySort') { state.sort = event.target.value; renderLibrary(); } });
+  elements.animeList.addEventListener('click', async (event) => { const open = event.target.closest('[data-open-anime]'); const edit = event.target.closest('[data-edit-anime]'); const remove = event.target.closest('[data-remove-anime]'); const increment = event.target.closest('[data-increment-anime]'); if (open) renderAnimeDetail(state.anime.find((item) => String(item.id) === open.dataset.openAnime)); if (edit) openEditForm(state.anime.find((item) => String(item.id) === edit.dataset.editAnime)); if (increment) await incrementEpisode(state.anime.find((item) => String(item.id) === increment.dataset.incrementAnime)); if (remove) { const item = state.anime.find((anime) => String(anime.id) === remove.dataset.removeAnime); if (!item || !window.confirm(`Remove ${item.title} from your archive?`)) return; state.anime = state.anime.filter((anime) => anime.id !== item.id); if (supabaseClient) await supabaseClient.from('anime_library').delete().eq('id', item.id); await persist(); renderLibrary(); } });
   elements.modalInput.addEventListener('input', (event) => { clearTimeout(state.searchTimer); elements.searchStatus.textContent = 'Searching in 750ms...'; state.searchTimer = setTimeout(() => searchAnime(event.target.value), SEARCH_DELAY); });
   elements.modalInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); clearTimeout(state.searchTimer); searchAnime(event.target.value); } });
   elements.searchResults.addEventListener('click', (event) => { const button = event.target.closest('[data-result-id]'); if (!button) return; const item = state.searchResults.find((result) => String(result.id) === button.dataset.resultId); elements.searchResults.classList.add('hidden'); elements.addDetailStep.classList.remove('hidden'); elements.modalInput.parentElement.classList.add('hidden'); elements.addDetailStep.innerHTML = makeAddForm(item); bindAddForm(item); });
@@ -403,6 +691,7 @@ function bindEvents() {
     const result = state.discoveryResults.find((item) => String(item.id) === button.dataset.discoverId);
     if (result) openAddModalFromDiscovery(result);
   });
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !elements.modal.classList.contains('hidden')) closeAddModal(); });
 }
 
-loadAnime().then(() => { bindEvents(); renderLibrary(); });
+loadAnime().then(() => { loadPlanning(); refreshPlanCompletion(); bindEvents(); showView(elements.dashboardView); renderDashboard(); renderLibrary(); });

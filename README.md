@@ -1,5 +1,15 @@
 # My-Anime-Notebook
 
+## Personal planning
+
+The dashboard, weekly planner, streak history, deferred backup list, and milestones are stored locally in the browser. A weekly goal is completed when the selected number of anime are set to `Watched`; unfinished selections move to the deferred backup list when a new week begins. Episode progress remains available as secondary momentum through the `+1 episode` action.
+
+Use **Export backup** on the dashboard to save the library and planning state as JSON. **Import backup** merges anime records by ID and restores the saved plans, deferred titles, milestones, and episode activity.
+
+The Dashboard estimates total and watched hours from API runtimes, using 24 minutes per episode when an API does not provide a runtime. The `+1 episode` action promotes dropped titles to `Watching`; finishing the final episode promotes a Watching title to `Watched` and opens the rating and closing-notes form. Watched titles do not display a `+1 episode` action.
+
+Discovery removes titles already present in the notebook by ID or matching title before rendering results.
+
 ## Supabase setup
 
 The app uses `anime_library` for shared persistence and falls back to browser storage if the table is unavailable. Run this once in the Supabase SQL Editor:

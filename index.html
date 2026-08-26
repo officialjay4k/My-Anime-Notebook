@@ -13,17 +13,30 @@
     <header class="site-header">
       <button id="brandBtn" class="brand" type="button"><span class="brand-mark">◔</span> My Anime Notebook</button>
       <label class="global-search"><span>⌕</span><input id="globalSearch" type="search" placeholder="Search deep into the void..." /></label>
+      <nav class="site-nav" aria-label="Primary navigation"><button class="nav-btn active" data-view="dashboardView" type="button">Dashboard</button><button class="nav-btn" data-view="libraryView" type="button">Library</button><button class="nav-btn" data-view="plannerView" type="button">Plan</button><button class="nav-btn" data-view="calendarView" type="button">Calendar</button></nav>
       <span id="dbStatus" class="db-status">Local save</span>
     </header>
 
     <main class="page-shell">
-      <section id="libraryView" class="view active-view">
+      <section id="dashboardView" class="view active-view">
+        <div id="dashboardContent"></div>
+      </section>
+
+      <section id="libraryView" class="view">
         <div class="page-heading">
           <div><p class="eyebrow">Your personal archive</p><h1>Your Astral Archive</h1><p class="muted">Everything you watch, remember, and return to.</p></div>
           <div class="heading-actions"><div id="goalCounter" class="goal-counter"></div><button id="discoverBtn" class="discovery-button" type="button"><span>✦</span> Discover anime</button><button id="newAnimeBtn" class="primary-btn" type="button">＋ Add anime</button></div>
         </div>
         <nav id="statusTabs" class="status-tabs" aria-label="Library filters"></nav>
         <div id="animeList" class="anime-grid"></div>
+      </section>
+
+      <section id="plannerView" class="view">
+        <div id="plannerContent"></div>
+      </section>
+
+      <section id="calendarView" class="view">
+        <div id="calendarContent"></div>
       </section>
 
       <section id="discoveryView" class="view">
