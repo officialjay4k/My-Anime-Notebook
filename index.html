@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=3" />
   </head>
   <body>
     <header class="site-header">
@@ -20,10 +20,19 @@
       <section id="libraryView" class="view active-view">
         <div class="page-heading">
           <div><p class="eyebrow">Your personal archive</p><h1>Your Astral Archive</h1><p class="muted">Everything you watch, remember, and return to.</p></div>
-          <div class="heading-actions"><div id="goalCounter" class="goal-counter"></div><button id="newAnimeBtn" class="primary-btn" type="button">＋ Add anime</button></div>
+          <div class="heading-actions"><div id="goalCounter" class="goal-counter"></div><button id="discoverBtn" class="discovery-button" type="button"><span>✦</span> Discover anime</button><button id="newAnimeBtn" class="primary-btn" type="button">＋ Add anime</button></div>
         </div>
         <nav id="statusTabs" class="status-tabs" aria-label="Library filters"></nav>
         <div id="animeList" class="anime-grid"></div>
+      </section>
+
+      <section id="discoveryView" class="view">
+        <div class="page-heading">
+          <div><button id="discoveryBackBtn" class="back-link" type="button">← Back to Library</button><p class="eyebrow">Recover your watch history</p><h1>Anime Discovery</h1><p class="muted">Browse a fresh selection and add the ones you remember watching.</p></div>
+          <button id="refreshDiscoveryBtn" class="primary-btn" type="button">↻ New selection</button>
+        </div>
+        <p id="discoveryStatus" class="discovery-status">Loading a random selection...</p>
+        <div id="discoveryList" class="discovery-grid"></div>
       </section>
 
       <section id="animeView" class="view">
@@ -49,6 +58,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="config.js"></script>
-    <script src="script.js"></script>
+    <script src="script.js?v=3"></script>
   </body>
 </html>

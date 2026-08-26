@@ -15,6 +15,7 @@ const state = {
   filter: 'All',
   query: '',
   searchResults: [],
+  discoveryResults: [],
   selectedAnime: null,
   selectedEpisode: null,
   searchTimer: null,
@@ -22,10 +23,12 @@ const state = {
   episodeController: null,
   editingId: null
 };
+const episodeCache = new Map();
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
   libraryView: $('#libraryView'),
+  discoveryView: $('#discoveryView'),
   animeView: $('#animeView'),
   episodeView: $('#episodeView'),
   animeList: $('#animeList'),
@@ -37,7 +40,9 @@ const elements = {
   searchResults: $('#searchResults'),
   searchStatus: $('#searchStatus'),
   addDetailStep: $('#addDetailStep'),
-  dbStatus: $('#dbStatus')
+  dbStatus: $('#dbStatus'),
+  discoveryList: $('#discoveryList'),
+  discoveryStatus: $('#discoveryStatus')
 };
 
 function escapeHtml(value) {
@@ -135,9 +140,39 @@ async function persist() {
 }
 
 function showView(view) {
-  [elements.libraryView, elements.animeView, elements.episodeView].forEach((item) => item.classList.remove('active-view'));
+  [elements.libraryView, elements.discoveryView, elements.animeView, elements.episodeView].forEach((item) => item.classList.remove('active-view'));
   view.classList.add('active-view');
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function fetchDiscovery() {
+  elements.discoveryStatus.textContent = 'Finding a fresh selection...';
+  elements.discoveryList.innerHTML = '<div class="empty-state"><span>Searching the anime database...</span></div>';
+  try {
+    const response = await fetch(ANILIST_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        query: 'query($page:Int){ Page(page:$page, perPage:12) { media(type:ANIME, sort:POPULARITY_DESC, isAdult:false, status_in:[FINISHED, RELEASING]) { id title { romaji english } coverImage { large medium } episodes averageScore genres } } }',
+        variables: { page: Math.floor(Math.random() * 40) + 1 }
+      })
+    });
+    if (!response.ok) throw new Error('Discovery request failed');
+    const data = await response.json();
+    const results = (data.data?.Page?.media || []).map(normalize);
+    state.discoveryResults = results;
+    elements.discoveryStatus.textContent = `${results.length} random titles found`;
+    elements.discoveryList.innerHTML = results.map((item) => `<article class="discovery-card"><img src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><div><h2>${escapeHtml(item.title)}</h2><p>${item.episodes || '?'} episodes${item.averageScore ? ` · ${item.averageScore}% score` : ''}</p><button class="discover-add" data-discover-id="${item.id}" type="button">Add to notebook</button></div></article>`).join('');
+  } catch (error) {
+    console.error('Discovery request failed:', error);
+    elements.discoveryStatus.textContent = 'Discovery is temporarily unavailable.';
+    elements.discoveryList.innerHTML = '<div class="empty-state"><strong>Could not load anime</strong><span>Try New selection again.</span></div>';
+  }
+}
+
+function openDiscovery() {
+  showView(elements.discoveryView);
+  fetchDiscovery();
 }
 
 function statusClass(status) {
@@ -209,21 +244,42 @@ function makeAddForm(item) {
   return `<div class="add-detail"><button class="back-link" data-add-back type="button">← Change anime</button><div class="selected-preview"><img src="${escapeHtml(item.cover)}" alt="" /><div><p class="eyebrow">Selected title</p><h2>${escapeHtml(item.title)}</h2></div></div><div class="form-grid"><label class="field">Status<select id="addStatus"><option>Watching</option><option>Watched</option><option>Dropped</option><option>Plan to Watch</option></select></label><label class="field">On episode<input id="addEpisode" type="number" min="0" value="0" /></label><label class="field full">Rating<div id="addRating" class="star-rating">${renderStars(0, true)}</div></label><label class="vip-toggle full"><input id="addVip" type="checkbox" /> Mark as VIP anime</label><label class="vip-toggle full"><input id="addRewatch" type="checkbox" /> Mark for Rewatch</label><label class="field full">Notes<textarea id="addNotes" rows="3" placeholder="Write a note about this anime..."></textarea></label></div><button id="commitAnime" class="primary-btn wide" type="button">Commit to Library</button></div>`;
 }
 
+function normalizeEpisode(episode) {
+  const attributes = episode.attributes || {};
+  const number = attributes.number || attributes.relativeNumber || episode.id;
+  return { number, title: attributes.canonicalTitle || attributes.titles?.en_us || attributes.titles?.en_jp || `Episode ${number}`, image: attributes.thumbnail?.original || attributes.thumbnail?.large || '' };
+}
+
 async function fetchEpisodes(item) {
+  const cacheKey = `${item.title}`.toLowerCase();
+  if (episodeCache.has(cacheKey)) return episodeCache.get(cacheKey);
   if (state.episodeController) state.episodeController.abort();
   state.episodeController = new AbortController();
   try {
-    const animeResponse = await fetch(`${EPISODE_API_URL}/anime?filter%5Btext%5D=${encodeURIComponent(item.title)}&page%5Blimit%5D=1`, { signal: state.episodeController.signal });
+    const animeResponse = await fetch(`${EPISODE_API_URL}/anime?filter%5Btext%5D=${encodeURIComponent(item.title)}&page%5Blimit%5D=5`, { signal: state.episodeController.signal });
+    if (!animeResponse.ok) throw new Error(`Anime lookup returned ${animeResponse.status}`);
     const animeData = await animeResponse.json();
-    const kitsuId = animeData.data?.[0]?.id;
-    if (!kitsuId) return [];
-    const response = await fetch(`${EPISODE_API_URL}/episodes?filter%5Bmedia_id%5D=${kitsuId}&page%5Blimit%5D=100`, { signal: state.episodeController.signal });
-    const data = await response.json();
-    return (data.data || []).map((episode) => {
-      const attributes = episode.attributes || {};
-      const image = attributes.thumbnail?.original || '';
-      return { number: attributes.number || episode.id, title: attributes.canonicalTitle || attributes.titles?.en_us || `Episode ${attributes.number || episode.id}`, image };
-    });
+    const matches = animeData.data || [];
+    const requestedTitle = item.title.toLowerCase();
+    const match = matches.find((candidate) => {
+      const candidateTitle = candidate.attributes?.canonicalTitle?.toLowerCase() || '';
+      return candidateTitle === requestedTitle || candidateTitle.includes(requestedTitle) || requestedTitle.includes(candidateTitle);
+    }) || matches[0];
+    const kitsuId = match?.id;
+    if (!kitsuId) throw new Error('Kitsu did not find this anime');
+    const episodes = [];
+    const pageSize = 20;
+    for (let offset = 0; offset < 1000; offset += pageSize) {
+      const response = await fetch(`${EPISODE_API_URL}/episodes?filter%5Bmedia_id%5D=${encodeURIComponent(kitsuId)}&page%5Blimit%5D=${pageSize}&page%5Boffset%5D=${offset}`, { signal: state.episodeController.signal });
+      if (!response.ok) throw new Error(`Episode lookup returned ${response.status}`);
+      const data = await response.json();
+      const page = data.data || [];
+      episodes.push(...page.map(normalizeEpisode));
+      if (page.length < pageSize) break;
+    }
+    episodes.sort((first, second) => Number(first.number) - Number(second.number));
+    episodeCache.set(cacheKey, episodes);
+    return episodes;
   } catch (error) {
     if (error.name !== 'AbortError') console.warn('Episode API failed:', error);
     return [];
@@ -237,7 +293,7 @@ function episodeRows(item, episodes) {
 async function renderAnimeDetail(item) {
   state.selectedAnime = item;
   showView(elements.animeView);
-    elements.animeDetail.innerHTML = `<div class="anime-hero"><img class="hero-poster" src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><div class="hero-copy"><div class="hero-title-row"><span class="status-pill ${statusClass(item.status)}">${escapeHtml(item.status)}</span>${item.vip ? '<span class="vip-badge inline">VIP</span>' : ''}${item.rewatch ? '<span class="rewatch-badge inline">REWATCH</span>' : ''}</div><h1>${escapeHtml(item.title)}</h1><p class="muted">${item.totalEpisodes || item.episodes || '?'} episodes · Your personal record</p><p>${escapeHtml(item.notes || 'No notes yet.')}</p><div class="stars large">${renderStars(item.rating)}</div><div class="hero-controls"><label>On episode<input id="heroEpisode" type="number" min="0" max="${item.totalEpisodes}" value="${item.currentEpisode}" /></label><button id="editAnimeButton" class="ghost-btn" type="button">Edit details</button><button id="openChronicles" class="primary-btn" type="button">Open episode chronicles</button></div></div></div><section class="chronicle-preview"><div class="section-title"><h2>Chronological Logs</h2><span id="episodeLoading">Loading episodes...</span></div><div id="heroEpisodes" class="episode-list"></div></section>`;
+    elements.animeDetail.innerHTML = `<div class="anime-hero"><img class="hero-poster" src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><div class="hero-copy"><div class="hero-title-row"><span class="status-pill ${statusClass(item.status)}">${escapeHtml(item.status)}</span>${item.vip ? '<span class="vip-badge inline">VIP</span>' : ''}${item.rewatch ? '<span class="rewatch-badge inline">REWATCH</span>' : ''}</div><h1>${escapeHtml(item.title)}</h1><p class="muted">${item.totalEpisodes || item.episodes || '?'} episodes · Your personal record</p><p>${escapeHtml(item.notes || 'No notes yet.')}</p><div class="stars large">${renderStars(item.rating)}</div><div class="hero-controls"><label>On episode<input id="heroEpisode" type="number" min="0" max="${item.totalEpisodes}" value="${item.currentEpisode}" /></label><button id="editAnimeButton" class="ghost-btn" type="button">Edit details</button><button id="openChronicles" class="primary-btn" type="button">Open episode chronicles</button></div></div></div><section class="chronicle-preview"><div class="section-title"><h2>Chronological Logs</h2><span id="episodeLoading">Loading episodes...</span></div><div id="heroEpisodes" class="episode-list"><div class="episode-loading">Fetching episode list and previews...</div></div></section>`;
   const episodes = await fetchEpisodes(item);
   item.loadedEpisodes = episodes;
   $('#episodeLoading').textContent = episodes.length ? `${episodes.length} episodes` : 'No episode data';
@@ -273,6 +329,16 @@ function renderEpisodeEntry(item, episode) {
 function openEditForm(item) {
   state.editingId = item.id;
   openAddModal(item);
+}
+
+function openAddModalFromDiscovery(item) {
+  state.editingId = null;
+  elements.modal.classList.remove('hidden');
+  elements.modalInput.parentElement.classList.add('hidden');
+  elements.searchResults.classList.add('hidden');
+  elements.addDetailStep.classList.remove('hidden');
+  elements.addDetailStep.innerHTML = makeAddForm(item);
+  bindAddForm(item);
 }
 
 function openAddModal(editingItem = null) {
@@ -317,6 +383,9 @@ function closeAddModal() { elements.modal.classList.add('hidden'); elements.moda
 
 function bindEvents() {
   $('#brandBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
+  $('#discoverBtn').addEventListener('click', openDiscovery);
+  $('#discoveryBackBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
+  $('#refreshDiscoveryBtn').addEventListener('click', fetchDiscovery);
   $('#newAnimeBtn').addEventListener('click', () => { state.editingId = null; elements.modal.classList.remove('hidden'); elements.modalInput.value = ''; elements.searchResults.innerHTML = ''; elements.searchResults.classList.remove('hidden'); elements.addDetailStep.classList.add('hidden'); elements.modalInput.parentElement.classList.remove('hidden'); elements.searchStatus.textContent = 'Results appear after 750ms. Press Enter to search now.'; elements.modalInput.focus(); });
   $('#closeModalBtn').addEventListener('click', closeAddModal);
   document.querySelector('[data-close="true"]').addEventListener('click', closeAddModal);
@@ -328,6 +397,12 @@ function bindEvents() {
   elements.modalInput.addEventListener('input', (event) => { clearTimeout(state.searchTimer); elements.searchStatus.textContent = 'Searching in 750ms...'; state.searchTimer = setTimeout(() => searchAnime(event.target.value), SEARCH_DELAY); });
   elements.modalInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); clearTimeout(state.searchTimer); searchAnime(event.target.value); } });
   elements.searchResults.addEventListener('click', (event) => { const button = event.target.closest('[data-result-id]'); if (!button) return; const item = state.searchResults.find((result) => String(result.id) === button.dataset.resultId); elements.searchResults.classList.add('hidden'); elements.addDetailStep.classList.remove('hidden'); elements.modalInput.parentElement.classList.add('hidden'); elements.addDetailStep.innerHTML = makeAddForm(item); bindAddForm(item); });
+  elements.discoveryList.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-discover-id]');
+    if (!button) return;
+    const result = state.discoveryResults.find((item) => String(item.id) === button.dataset.discoverId);
+    if (result) openAddModalFromDiscovery(result);
+  });
 }
 
 loadAnime().then(() => { bindEvents(); renderLibrary(); });
