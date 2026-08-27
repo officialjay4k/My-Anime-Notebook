@@ -54,3 +54,12 @@ OSError: [Errno 98] Address already in use
 127.0.0.1 - - [27/Aug/2026 13:44:13] "GET /script.js?v=3 HTTP/1.1" 200 -
 127.0.0.1 - - [27/Aug/2026 13:44:20] "GET / HTTP/1.1" 304 -
 127.0.0.1 - - [27/Aug/2026 13:44:20] "GET /script.js?v=3 HTTP/1.1" 304 -
+127.0.0.1 - - [27/Aug/2026 14:07:32] "GET /script.js?v=3 HTTP/1.1" 304 -
+127.0.0.1 - - [27/Aug/2026 14:09:45] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [27/Aug/2026 14:09:45] code 404, message File not found
+127.0.0.1 - - [27/Aug/2026 14:09:45] "GET /style.css HTTP/1.1" 404 -
+127.0.0.1 - - [27/Aug/2026 14:09:45] "GET /script.js?v=3 HTTP/1.1" 200 -
+127.0.0.1 - - [27/Aug/2026 14:10:06] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [27/Aug/2026 14:10:07] "GET /styles.css HTTP/1.1" 200 -
+127.0.0.1 - - [27/Aug/2026 14:10:24] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [27/Aug/2026 14:10:24] "GET /styles.css HTTP/1.1" 200 -
