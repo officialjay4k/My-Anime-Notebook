@@ -55,8 +55,18 @@ const elements = {
   addDetailStep: $('#addDetailStep'),
   dbStatus: $('#dbStatus'),
   discoveryList: $('#discoveryList'),
-  discoveryStatus: $('#discoveryStatus')
-  ,dashboardContent: $('#dashboardContent'), plannerContent: $('#plannerContent'), calendarContent: $('#calendarContent'), connectionsContent: $('#connectionsContent'), profileSelect: $('#profileSelect')
+  discoveryStatus: $('#discoveryStatus'),
+  searchView: $('#searchView'),
+  fullSearchInput: $('#fullSearchInput'),
+  executeSearchBtn: $('#executeSearchBtn'),
+  fullSearchList: $('#fullSearchList'),
+  fullSearchStatus: $('#fullSearchStatus'),
+  genreFilter: $('#genreFilter'),
+  typeFilter: $('#typeFilter'),
+  statusFilter: $('#statusFilter'),
+  sortFilter: $('#sortFilter'),
+  searchBackBtn: $('#searchBackBtn'),
+  dashboardContent: $('#dashboardContent'), plannerContent: $('#plannerContent'), calendarContent: $('#calendarContent'), connectionsContent: $('#connectionsContent'), profileSelect: $('#profileSelect')
 };
 
 function profileStorageKey(key) { return `${key}-${state.profile}`; }
@@ -290,7 +300,41 @@ function renderConnections() {
   const myScore = competition ? Number(competition.scores?.[state.profile] || 0) : 0;
   const theirScore = competition ? Number(competition.scores?.[opponent] || 0) : 0;
   const available = jordanLibrary.filter((item) => !state.anime.some((owned) => String(owned.id) === String(item.id)));
-  elements.connectionsContent.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Jordan + Ayden</p><h1>Connection Deck</h1><p class="muted">Share recommendations and keep a friendly weekly score.</p></div></div><div class="connection-grid"><article class="connection-panel glass-panel"><p class="eyebrow">Weekly competition · ${getWeekKey()}</p><h2>${competition ? 'The race is live' : 'Start the weekly race'}</h2><p class="muted">Both profiles can add episodes. Every completed episode counts once the race starts.</p><div class="scoreboard"><div><span>Jordan</span><strong>${competition ? competition.scores.jordan || 0 : '—'}</strong></div><div><span>Ayden</span><strong>${competition ? competition.scores.ayden || 0 : '—'}</strong></div></div>${competition ? `<p class="connection-result">${myScore === theirScore ? 'Tied up.' : myScore > theirScore ? `You are ahead by ${myScore - theirScore}.` : `${opponent === 'jordan' ? 'Jordan' : 'Ayden'} is ahead by ${theirScore - myScore}.`}</p>` : `<button class="primary-btn" data-start-competition type="button">Start this week's competition</button>`}</article><article class="connection-panel glass-panel"><p class="eyebrow">Jordan's saved orbit</p><h2>${available.length} titles to borrow</h2><p class="muted">${state.profile === 'jordan' ? 'Your friend will see your saved titles here when they switch profiles.' : 'Add one of Jordan\'s saved anime to your own library.'}</p><div class="shared-list">${available.length ? available.slice(0, 8).map((item) => `<div class="shared-item"><img src="${escapeHtml(item.cover)}" alt="" /><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)}</small></span>${state.profile === 'ayden' ? `<button class="ghost-btn" data-borrow-anime="${item.id}" type="button">Add to mine</button>` : ''}</div>`).join('') : '<span class="muted">No new shared titles yet.</span>'}</div></article></div><div class="connection-note glass-panel"><strong>Shared signal</strong><span>Switch profiles any time. Your library, plans, notes, and goals travel with the selected name.</span></div>`;
+  elements.connectionsContent.innerHTML = `<div class="page-heading">
+      <div><p class="eyebrow">Jordan + Ayden</p><h1>Connection Deck</h1><p class="muted">Share recommendations and keep a friendly weekly score.</p></div>
+      <button class="primary-btn" id="viewAllConnectionsBtn" type="button">View all shared anime</button>
+    </div>
+    <div class="connection-grid">
+      <article class="connection-panel glass-panel">
+        <p class="eyebrow">Weekly competition · ${getWeekKey()}</p><h2>${competition ? 'The race is live' : 'Start the weekly race'}</h2>
+        <p class="muted">Both profiles can add episodes. Every completed episode counts once the race starts.</p>
+        <div class="scoreboard"><div><span>Jordan</span><strong>${competition ? competition.scores.jordan || 0 : '—'}</strong></div><div><span>Ayden</span><strong>${competition ? competition.scores.ayden || 0 : '—'}</strong></div></div>
+        ${competition ? `<p class="connection-result">${myScore === theirScore ? 'Tied up.' : myScore > theirScore ? `You are ahead by ${myScore - theirScore}.` : `${opponent === 'jordan' ? 'Jordan' : 'Ayden'} is ahead by ${theirScore - myScore}.`}</p>` : `<button class="primary-btn" data-start-competition type="button">Start this week's competition</button>`}
+      </article>
+      <article class="connection-panel glass-panel">
+        <p class="eyebrow">Jordan's saved orbit</p><h2>${available.length} titles to borrow</h2>
+        <p class="muted">${state.profile === 'jordan' ? 'Your friend will see your saved titles here when they switch profiles.' : 'Add one of Jordan\'s saved anime to your own library.'}</p>
+        <div class="shared-list">${available.length ? available.slice(0, 8).map((item) => `<div class="shared-item"><img src="${escapeHtml(item.cover)}" alt="" /><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)}</small></span>${state.profile === 'ayden' ? `<button class="ghost-btn" data-borrow-anime="${item.id}" type="button">Add to mine</button>` : ''}</div>`).join('') : '<span class="muted">No new shared titles yet.</span>'}</div>
+      </article>
+    </div>
+    <div class="connection-note glass-panel"><strong>Shared signal</strong><span>Switch profiles any time. Your library, plans, notes, and goals travel with the selected name.</span></div>`;
+  $('#viewAllConnectionsBtn')?.addEventListener('click', () => {
+    // Navigate to a new sub-view? Or list all right here?
+    // Let's go with showing them all in the existing list.
+    const container = $('.connection-grid');
+    container.innerHTML = `
+      <div class="shared-list-full">
+        ${jordanLibrary.map(item => `
+          <div class="shared-item">
+            <img src="${escapeHtml(item.cover)}" alt="" />
+            <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)}</small></span>
+            ${state.profile === 'ayden' ? `<button class="ghost-btn" data-borrow-anime="${item.id}" type="button">Add</button>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+    $('#viewAllConnectionsBtn').remove();
+  });
 }
 
 async function loadAnime() {
@@ -402,13 +446,18 @@ function statusClass(status) {
 }
 
 function formatHours(hours) {
-  if (!Number.isFinite(hours) || hours <= 0) return 'Time unknown';
-  return `${hours < 10 ? hours.toFixed(1) : Math.round(hours)} hr${hours === 1 ? '' : 's'}`;
+  if (!Number.isFinite(hours) || hours <= 0) return '0m';
+  const totalMinutes = Math.round(hours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
 }
 
 function getWatchHours(item) {
-  const minutes = Number(item.duration ?? item.totalMinutes) || 24;
-  return (Number(item.totalEpisodes) || 1) * (Number(item.totalMinutes) || minutes) / 60;
+  const duration = Number(item.totalMinutes || item.duration) || 24;
+  return (Number(item.totalEpisodes) || 1) * duration / 60;
 }
 
 function renderStars(rating, interactive = false) {
@@ -449,7 +498,7 @@ function renderLibrary() {
       <div class="card-copy"><div class="card-title-row"><h2>${escapeHtml(item.title)}</h2>${item.vip ? '<span class="vip-mark">✦</span>' : ''}</div>
         ${isRateableStatus(item.status) ? `<div class="stars" aria-label="${item.rating} out of 10 stars">${renderStars(item.rating)}</div>` : ''}<p>${escapeHtml(item.notes || 'No notes yet.')}</p>
         <div class="progress"><span style="width:${progress}%"></span></div>
-        <div class="card-meta"><span>${formatHours(getWatchHours(item))} total</span><span>${formatHours(item.currentEpisode / total * getWatchHours(item))} watched</span></div><div class="card-actions ${item.status === 'Watched' ? 'compact' : ''}">${item.status !== 'Watched' ? `<button class="quick-episode-button" data-increment-anime="${item.id}" type="button">＋1 episode</button>` : ''}<button class="edit-card-button" data-edit-anime="${item.id}" type="button">Edit details</button><button class="remove-card-button" data-remove-anime="${item.id}" type="button">Remove</button></div>
+        <div class="card-meta"><span>${formatHours(getWatchHours(item))}</span><span>${formatHours(item.currentEpisode / total * getWatchHours(item))} watched</span></div><div class="card-actions ${item.status === 'Watched' ? 'compact' : ''}">${item.status !== 'Watched' ? `<button class="quick-episode-button" data-increment-anime="${item.id}" type="button">＋1 episode</button>` : ''}<button class="edit-card-button" data-edit-anime="${item.id}" type="button">Edit details</button><button class="remove-card-button" data-remove-anime="${item.id}" type="button">Remove</button></div>
       </div>
     </article>`;
   }).join('');
@@ -462,6 +511,84 @@ function isRateableStatus(status) {
 async function incrementEpisode(item) {
   if (!item || item.status === 'Watched') return;
   if (item.status === 'Dropped') item.status = 'Watching';
+
+async function executeFullSearch(query = '', page = 1) {
+  const genre = elements.genreFilter.value;
+  const type = elements.typeFilter.value;
+  const status = elements.statusFilter.value;
+  const sort = elements.sortFilter.value;
+  
+  elements.fullSearchList.innerHTML = '<div class="empty-state">Searching the void...</div>';
+  elements.fullSearchStatus.textContent = query ? `Searching for "${query}"...` : 'Fetching popular titles...';
+
+  try {
+    let url = `${JIKAN_URL}/anime?page=${page}&limit=24&sfw=true`;
+    if (query) url += `&q=${encodeURIComponent(query)}`;
+    if (genre) url += `&genres=${genre}`;
+    if (type) url += `&type=${type}`;
+    if (status) url += `&status=${status}`;
+    if (sort) url += `&order_by=${sort}&sort=desc`;
+    else if (!query) url += `&order_by=popularity&sort=asc`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+    const results = (data.data || []).map(normalize);
+    
+    renderSearchResults(results);
+    elements.fullSearchStatus.textContent = query ? `Found ${results.length} results for "${query}"` : 'Popular titles';
+  } catch (err) {
+    console.error('Search failed', err);
+    elements.fullSearchList.innerHTML = '<div class="empty-state">Failed to reach the database.</div>';
+  }
+}
+
+function renderSearchResults(results) {
+  if (!results.length) {
+    elements.fullSearchList.innerHTML = '<div class="empty-state">No matching anime found.</div>';
+    return;
+  }
+
+  elements.fullSearchList.innerHTML = results.map((item) => {
+    const isAdded = state.anime.some(a => String(a.mal_id) === String(item.mal_id) || String(a.id) === String(item.id));
+    const hours = getWatchHours(item);
+    
+    return `<article class="anime-card">
+      <div class="cover-button">
+        <img src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" />
+        ${isAdded ? '<span class="already-added-badge">IN NOTEBOOK</span>' : ''}
+        <span class="status-pill">${item.type || 'Anime'} · ${item.episodes || '?'} eps</span>
+      </div>
+      <div class="card-copy">
+        <div class="card-title-row"><h2>${escapeHtml(item.title)}</h2></div>
+        <p class="muted" style="font-size: 0.75rem; margin-bottom: 12px;">${formatHours(hours)} series duration</p>
+        <button class="primary-btn" data-add-result="${item.id}" type="button" ${isAdded ? 'disabled' : ''}>
+          ${isAdded ? 'Already Added' : 'Add to Notebook'}
+        </button>
+      </div>
+    </article>`;
+  }).join('');
+
+  // Bind buttons
+  elements.fullSearchList.querySelectorAll('[data-add-result]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.addResult;
+      const item = results.find(r => String(r.id) === String(id));
+      if (item) openAddModalFromSearch(item);
+    });
+  });
+}
+
+function openAddModalFromSearch(item) {
+  state.editingId = null;
+  elements.modal.classList.remove('hidden');
+  elements.modal.setAttribute('aria-hidden', 'false');
+  elements.modalInput.parentElement.classList.add('hidden');
+  elements.searchResults.classList.add('hidden');
+  elements.addDetailStep.classList.remove('hidden');
+  elements.addDetailStep.innerHTML = makeAddForm(item);
+  bindAddForm(item);
+}
+
   item.currentEpisode = Math.min(item.totalEpisodes, item.currentEpisode + 1);
   state.activity.unshift({ animeId: item.id, title: item.title, episode: item.currentEpisode, date: new Date().toISOString() });
   state.activity = state.activity.slice(0, 5000);
@@ -655,7 +782,10 @@ function bindAddForm(item) {
     }
     await persist();
     refreshPlanCompletion();
-    closeAddModal();
+    if (!elements.modal.classList.contains('hidden')) closeAddModal();
+    if (!elements.searchView.classList.contains('hidden')) {
+      showView(elements.libraryView);
+    }
     renderLibrary();
     renderDashboard();
     renderCalendar();
@@ -694,6 +824,21 @@ function bindEvents() {
     const restore = event.target.closest('[data-restore-deferred]');
     if (restore) { state.deferred = state.deferred.filter((id) => String(id) !== restore.dataset.restoreDeferred); savePlanning(); renderPlanner(); return; }
     if (save) {
+  
+  // New Search View Bindings
+  elements.executeSearchBtn.addEventListener('click', () => executeFullSearch(elements.fullSearchInput.value));
+  elements.fullSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') executeFullSearch(elements.fullSearchInput.value); });
+  [elements.genreFilter, elements.typeFilter, elements.statusFilter, elements.sortFilter].forEach(el => {
+    el.addEventListener('change', () => executeFullSearch(elements.fullSearchInput.value));
+  });
+  elements.searchBackBtn.addEventListener('click', () => showView(elements.libraryView));
+  
+  // Update "Add Anime" button to open this view instead of modal
+  document.getElementById('newAnimeBtn').addEventListener('click', () => {
+    showView(elements.searchView);
+    executeFullSearch(); // Load initial popular list
+  });
+
       const weekKey = getWeekKey();
       const plan = getPlan(weekKey) || { weekKey, animeIds: [] };
       plan.target = Number($('#weeklyTarget').value) || 1;
