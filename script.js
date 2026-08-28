@@ -795,6 +795,82 @@ function bindAddForm(item) {
 
 function closeAddModal() { elements.modal.classList.add('hidden'); elements.modal.setAttribute('aria-hidden', 'true'); state.editingId = null; state.modalReturnFocus?.focus(); state.modalReturnFocus = null; }
 
+async function executeFullSearch(query = '', page = 1) {
+  const genre = elements.genreFilter.value;
+  const type = elements.typeFilter.value;
+  const status = elements.statusFilter.value;
+  const sort = elements.sortFilter.value;
+  
+  elements.fullSearchList.innerHTML = '<div class="empty-state">Searching the void...</div>';
+  elements.fullSearchStatus.textContent = query ? `Searching for "${query}"...` : 'Fetching popular titles...';
+
+  try {
+    let url = `${JIKAN_URL}/anime?page=${page}&limit=24&sfw=true`;
+    if (query) url += `&q=${encodeURIComponent(query)}`;
+    if (genre) url += `&genres=${genre}`;
+    if (type) url += `&type=${type}`;
+    if (status) url += `&status=${status}`;
+    if (sort) url += `&order_by=${sort}&sort=desc`;
+    else if (!query) url += `&order_by=popularity&sort=asc`;
+
+    const response = await fetch(url);
+    const data = await response.json();
+    const results = (data.data || []).map(normalize);
+    
+    renderSearchResults(results);
+    elements.fullSearchStatus.textContent = query ? `Found ${results.length} results for "${query}"` : 'Popular titles';
+  } catch (err) {
+    console.error('Search failed', err);
+    elements.fullSearchList.innerHTML = '<div class="empty-state">Failed to reach the database.</div>';
+  }
+}
+
+function renderSearchResults(results) {
+  if (!results.length) {
+    elements.fullSearchList.innerHTML = '<div class="empty-state">No matching anime found.</div>';
+    return;
+  }
+
+  elements.fullSearchList.innerHTML = results.map((item) => {
+    const isAdded = state.anime.some(a => String(a.mal_id) === String(item.mal_id) || String(a.id) === String(item.id));
+    const hours = getWatchHours(item);
+    
+    return `<article class="anime-card">
+      <div class="cover-button" style="position:relative;">
+        <img src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" />
+        ${isAdded ? '<span class="already-added-badge">IN NOTEBOOK</span>' : ''}
+        <span class="status-pill">${item.type || 'Anime'} · ${item.episodes || '?'} eps</span>
+      </div>
+      <div class="card-copy">
+        <div class="card-title-row"><h2>${escapeHtml(item.title)}</h2></div>
+        <p class="muted" style="font-size: 0.75rem; margin-bottom: 12px;">${formatHours(hours)} series duration</p>
+        <button class="primary-btn" data-add-result="${item.id}" type="button" ${isAdded ? 'disabled' : ''}>
+          ${isAdded ? 'Already Added' : 'Add to Notebook'}
+        </button>
+      </div>
+    </article>`;
+  }).join('');
+
+  elements.fullSearchList.querySelectorAll('[data-add-result]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.addResult;
+      const item = results.find(r => String(r.id) === String(id));
+      if (item) openAddModalFromSearch(item);
+    });
+  });
+}
+
+function openAddModalFromSearch(item) {
+  state.editingId = null;
+  elements.modal.classList.remove('hidden');
+  elements.modal.setAttribute('aria-hidden', 'false');
+  elements.modalInput.parentElement.classList.add('hidden');
+  elements.searchResults.classList.add('hidden');
+  elements.addDetailStep.classList.remove('hidden');
+  elements.addDetailStep.innerHTML = makeAddForm(item);
+  bindAddForm(item);
+}
+
 function bindEvents() {
   document.querySelector('.site-nav').addEventListener('click', (event) => {
     const button = event.target.closest('[data-view]');
@@ -833,10 +909,17 @@ function bindEvents() {
   });
   elements.searchBackBtn.addEventListener('click', () => showView(elements.libraryView));
   
-  // Update "Add Anime" button to open this view instead of modal
+  // New Search View Bindings
+  elements.executeSearchBtn.addEventListener('click', () => executeFullSearch(elements.fullSearchInput.value));
+  elements.fullSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') executeFullSearch(elements.fullSearchInput.value); });
+  [elements.genreFilter, elements.typeFilter, elements.statusFilter, elements.sortFilter].forEach(el => {
+    el.addEventListener('change', () => executeFullSearch(elements.fullSearchInput.value));
+  });
+  elements.searchBackBtn.addEventListener('click', () => showView(elements.libraryView));
+  
   document.getElementById('newAnimeBtn').addEventListener('click', () => {
     showView(elements.searchView);
-    executeFullSearch(); // Load initial popular list
+    executeFullSearch();
   });
 
       const weekKey = getWeekKey();
@@ -854,7 +937,7 @@ function bindEvents() {
   $('#discoverBtn').addEventListener('click', openDiscovery);
   $('#discoveryBackBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#refreshDiscoveryBtn').addEventListener('click', fetchDiscovery);
-  $('#newAnimeBtn').addEventListener('click', (event) => { state.modalReturnFocus = event.currentTarget; state.editingId = null; elements.modal.classList.remove('hidden'); elements.modal.setAttribute('aria-hidden', 'false'); elements.modalInput.value = ''; elements.searchResults.innerHTML = ''; elements.searchResults.classList.remove('hidden'); elements.addDetailStep.classList.add('hidden'); elements.modalInput.parentElement.classList.remove('hidden'); elements.searchStatus.textContent = 'Results appear after 750ms. Press Enter to search now.'; elements.modalInput.focus(); });
+  // old modal listener removed
   $('#closeModalBtn').addEventListener('click', closeAddModal);
   document.querySelector('[data-close="true"]').addEventListener('click', closeAddModal);
   $('#backToLibraryBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
