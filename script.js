@@ -403,8 +403,8 @@ async function persist() {
 }
 
 function showView(view) {
-  [elements.dashboardView, elements.libraryView, elements.plannerView, elements.calendarView, elements.connectionsView, elements.discoveryView, elements.animeView, elements.episodeView].forEach((item) => item.classList.remove('active-view'));
-  view.classList.add('active-view');
+  [elements.dashboardView, elements.libraryView, elements.plannerView, elements.calendarView, elements.connectionsView, elements.discoveryView, elements.animeView, elements.episodeView, elements.searchView].forEach((item) => item?.classList.remove('active-view'));
+  view?.classList.add('active-view');
   document.querySelectorAll('.nav-btn').forEach((item) => item.classList.toggle('active', item.dataset.view === view.id));
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -871,6 +871,62 @@ function openAddModalFromSearch(item) {
   bindAddForm(item);
 }
 
+async function executeFullSearch(q) {
+  var query = q || '';
+  var genre = elements.genreFilter ? elements.genreFilter.value : '';
+  var type = elements.typeFilter ? elements.typeFilter.value : '';
+  var status = elements.statusFilter ? elements.statusFilter.value : '';
+  var sort = elements.sortFilter ? elements.sortFilter.value : 'popularity';
+  if (elements.fullSearchList) elements.fullSearchList.innerHTML = '<div class="empty-state">Searching the void...</div>';
+  if (elements.fullSearchStatus) elements.fullSearchStatus.textContent = query ? 'Searching for "' + query + '"...' : 'Fetching popular titles...';
+  await new Promise(function(r) { setTimeout(r, 750); });
+  try {
+    var url;
+    if (query) {
+      url = 'https://api.jikan.moe/v4/anime?q=' + encodeURIComponent(query) + '&limit=24&sfw=true';
+      if (genre) url += '&genres=' + genre;
+      if (type) url += '&type=' + type;
+      if (status) url += '&status=' + status;
+      if (sort) url += '&order_by=' + sort + '&sort=desc';
+    } else {
+      url = 'https://api.jikan.moe/v4/top/anime?limit=24';
+      if (genre) url += '&genres=' + genre;
+    }
+    var response = await fetch(url);
+    var data = await response.json();
+    var results = (data.data || []).map(normalize);
+    renderSearchResults(results);
+    if (elements.fullSearchStatus) elements.fullSearchStatus.textContent = query ? 'Found ' + results.length + ' results for "' + query + '"' : 'Popular anime';
+  } catch(err) {
+    console.error('Search failed', err);
+    if (elements.fullSearchList) elements.fullSearchList.innerHTML = '<div class="empty-state">Failed to reach the database.</div>';
+  }
+}
+function renderSearchResults(results) {
+  elements.fullSearchList.innerHTML = results.map(function(item) {
+    var isAdded = state.anime.some(function(a) { return String(a.mal_id) === String(item.mal_id) || String(a.id) === String(item.id); });
+    var hours = getWatchHours(item);
+    return '<article class="anime-card"><div class="cover-button" style="position:relative;"><img src="' + escapeHtml(item.cover) + '" alt="' + escapeHtml(item.title) + '" />' + (isAdded ? '<span class="already-added-badge">IN NOTEBOOK</span>' : '') + '<span class="status-pill">' + (item.type || 'Anime') + ' · ' + (item.episodes || '?') + ' eps</span></div><div class="card-copy"><div class="card-title-row"><h2>' + escapeHtml(item.title) + '</h2></div><p class="muted" style="font-size:0.75rem;margin-bottom:12px;">' + formatHours(hours) + ' series duration</p><button class="primary-btn" data-add-result="' + item.id + '" type="button" ' + (isAdded ? 'disabled' : '') + '>' + (isAdded ? 'Already Added' : 'Add to Notebook') + '</button></div></article>';
+  }).join('');
+  elements.fullSearchList.querySelectorAll('[data-add-result]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var id = btn.dataset.addResult;
+      var item = results.find(function(r) { return String(r.id) === String(id); });
+      if (item) openAddModalFromSearch(item);
+    });
+  });
+}
+function openAddModalFromSearch(item) {
+  state.editingId = null;
+  elements.modal.classList.remove('hidden');
+  elements.modal.setAttribute('aria-hidden', 'false');
+  elements.modalInput.parentElement.classList.add('hidden');
+  elements.searchResults.classList.add('hidden');
+  elements.addDetailStep.classList.remove('hidden');
+  elements.addDetailStep.innerHTML = makeAddForm(item);
+  bindAddForm(item);
+}
+
 function bindEvents() {
   document.querySelector('.site-nav').addEventListener('click', (event) => {
     const button = event.target.closest('[data-view]');
@@ -937,6 +993,13 @@ function bindEvents() {
   $('#discoverBtn').addEventListener('click', openDiscovery);
   $('#discoveryBackBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#refreshDiscoveryBtn').addEventListener('click', fetchDiscovery);
+  if (elements.executeSearchBtn) elements.executeSearchBtn.addEventListener('click', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.fullSearchInput) elements.fullSearchInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') executeFullSearch(elements.fullSearchInput.value); });
+  if (elements.genreFilter) elements.genreFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.typeFilter) elements.typeFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.statusFilter) elements.statusFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.sortFilter) elements.sortFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.searchBackBtn) elements.searchBackBtn.addEventListener('click', function() { showView(elements.libraryView); });
   // old modal listener removed
   $('#closeModalBtn').addEventListener('click', closeAddModal);
   document.querySelector('[data-close="true"]').addEventListener('click', closeAddModal);
