@@ -39,6 +39,41 @@ const state = {
   plans: [], deferred: [], milestones: [500, 1000], activity: []
 };
 const episodeCache = new Map();
+const requestQueue = [];
+let isProcessingRequest = false;
+const MIN_REQUEST_DELAY = 1000; // Minimum 1 second between API requests
+
+async function queueApiRequest(url, options = {}) {
+  return new Promise((resolve, reject) => {
+    requestQueue.push({ url, options, resolve, reject });
+    processRequestQueue();
+  });
+}
+
+async function processRequestQueue() {
+  if (isProcessingRequest || requestQueue.length === 0) return;
+  isProcessingRequest = true;
+  
+  const { url, options, resolve, reject } = requestQueue.shift();
+  
+  try {
+    const response = await fetch(url, options);
+    if (response.status === 429) {
+      reject(new Error('Rate limited. Please wait a moment and try again.'));
+    } else if (!response.ok) {
+      reject(new Error(`API returned ${response.status}`));
+    } else {
+      resolve(response.json());
+    }
+  } catch (error) {
+    reject(error);
+  }
+  
+  setTimeout(() => {
+    isProcessingRequest = false;
+    processRequestQueue();
+  }, MIN_REQUEST_DELAY);
+}
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
