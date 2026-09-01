@@ -30,6 +30,10 @@ const state = {
   editingId: null,
   modalReturnFocus: null,
   historyExpanded: {},
+  searchGenre: '',
+  searchType: '',
+  searchStatus: '',
+  searchSort: 'popularity',
   plans: [], deferred: [], milestones: [500, 1000], activity: []
 };
 const episodeCache = new Map();
@@ -512,33 +516,56 @@ async function incrementEpisode(item) {
   if (!item || item.status === 'Watched') return;
   if (item.status === 'Dropped') item.status = 'Watching';
 
-async function executeFullSearch(query = '', page = 1) {
-  const genre = elements.genreFilter.value;
-  const type = elements.typeFilter.value;
-  const status = elements.statusFilter.value;
-  const sort = elements.sortFilter.value;
+async function executeFullSearch(query = '') {
+  const genre = elements.genreFilter?.value || '';
+  const type = elements.typeFilter?.value || '';
+  const status = elements.statusFilter?.value || '';
+  const sort = elements.sortFilter?.value || 'popularity';
+  
+  state.searchGenre = genre;
+  state.searchType = type;
+  state.searchStatus = status;
+  state.searchSort = sort;
   
   elements.fullSearchList.innerHTML = '<div class="empty-state">Searching the void...</div>';
-  elements.fullSearchStatus.textContent = query ? `Searching for "${query}"...` : 'Fetching popular titles...';
+  elements.fullSearchStatus.textContent = query ? `Searching for "${query}"...` : 'Fetching popular anime...';
 
   try {
-    let url = `${JIKAN_URL}/anime?page=${page}&limit=24&sfw=true`;
-    if (query) url += `&q=${encodeURIComponent(query)}`;
-    if (genre) url += `&genres=${genre}`;
-    if (type) url += `&type=${type}`;
-    if (status) url += `&status=${status}`;
-    if (sort) url += `&order_by=${sort}&sort=desc`;
-    else if (!query) url += `&order_by=popularity&sort=asc`;
+    let url;
+    
+    if (query) {
+      // Search by title
+      url = `${JIKAN_URL}/anime?q=${encodeURIComponent(query)}&limit=24&sfw=true`;
+      if (genre) url += `&genres=${genre}`;
+      if (type) url += `&type=${type}`;
+      if (status) url += `&status=${status}`;
+      if (sort && sort !== 'popularity') url += `&order_by=${sort}&sort=desc`;
+    } else {
+      // Browse by filters (popular if no search)
+      if (genre) {
+        url = `${JIKAN_URL}/anime?genres=${genre}&limit=24&sfw=true&order_by=popularity&sort=desc`;
+      } else if (sort === 'score') {
+        url = `${JIKAN_URL}/top/anime?limit=24&type=${type || ''}`.replace('type=', type ? 'type=' : '');
+      } else {
+        url = `${JIKAN_URL}/top/anime?limit=24`;
+      }
+      if (type) url += url.includes('?') ? `&type=${type}` : `?type=${type}`;
+      if (status) url += `&status=${status}`;
+    }
 
     const response = await fetch(url);
+    if (!response.ok) throw new Error(`API returned ${response.status}`);
     const data = await response.json();
-    const results = (data.data || []).map(normalize);
+    const results = (data.data || []).map(normalize).filter(item => item && item.title);
     
     renderSearchResults(results);
-    elements.fullSearchStatus.textContent = query ? `Found ${results.length} results for "${query}"` : 'Popular titles';
+    elements.fullSearchStatus.textContent = results.length 
+      ? (query ? `Found ${results.length} results for "${query}"` : `Showing ${results.length} anime`) 
+      : (query ? 'No results found' : 'Loading...');
   } catch (err) {
-    console.error('Search failed', err);
-    elements.fullSearchList.innerHTML = '<div class="empty-state">Failed to reach the database.</div>';
+    console.error('Search failed:', err);
+    elements.fullSearchList.innerHTML = '<div class="empty-state"><strong>Search unavailable</strong><span>The anime database is temporarily unreachable. Try again in a moment.</span></div>';
+    elements.fullSearchStatus.textContent = 'Error: Database unreachable';
   }
 }
 
@@ -795,38 +822,6 @@ function bindAddForm(item) {
 
 function closeAddModal() { elements.modal.classList.add('hidden'); elements.modal.setAttribute('aria-hidden', 'true'); state.editingId = null; state.modalReturnFocus?.focus(); state.modalReturnFocus = null; }
 
-async function executeFullSearch(q) {
-  var query = q || '';
-  var genre = elements.genreFilter ? elements.genreFilter.value : '';
-  var type = elements.typeFilter ? elements.typeFilter.value : '';
-  var status = elements.statusFilter ? elements.statusFilter.value : '';
-  var sort = elements.sortFilter ? elements.sortFilter.value : 'popularity';
-  if (elements.fullSearchList) elements.fullSearchList.innerHTML = '<div class="empty-state">Searching the void...</div>';
-  if (elements.fullSearchStatus) elements.fullSearchStatus.textContent = query ? 'Searching for "' + query + '"...' : 'Fetching popular titles...';
-  await new Promise(function(r) { setTimeout(r, 750); });
-  try {
-    var url;
-    if (query) {
-      url = 'https://api.jikan.moe/v4/anime?q=' + encodeURIComponent(query) + '&limit=24&sfw=true';
-      if (genre) url += '&genres=' + genre;
-      if (type) url += '&type=' + type;
-      if (status) url += '&status=' + status;
-      if (sort) url += '&order_by=' + sort + '&sort=desc';
-    } else {
-      url = 'https://api.jikan.moe/v4/top/anime?limit=24';
-      if (genre) url += '&genres=' + genre;
-    }
-    var response = await fetch(url);
-    var data = await response.json();
-    var results = (data.data || []).map(normalize);
-    renderSearchResults(results);
-    if (elements.fullSearchStatus) elements.fullSearchStatus.textContent = query ? 'Found ' + results.length + ' results for "' + query + '"' : 'Popular anime';
-  } catch(err) {
-    console.error('Search failed', err);
-    if (elements.fullSearchList) elements.fullSearchList.innerHTML = '<div class="empty-state">Failed to reach the database.</div>';
-  }
-}
-
 function bindEvents() {
   document.querySelector('.site-nav').addEventListener('click', (event) => {
     const button = event.target.closest('[data-view]');
@@ -886,6 +881,15 @@ function bindEvents() {
   $('#discoverBtn').addEventListener('click', openDiscovery);
   $('#discoveryBackBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#refreshDiscoveryBtn').addEventListener('click', fetchDiscovery);
+  if (elements.executeSearchBtn) elements.executeSearchBtn.addEventListener('click', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.fullSearchInput) elements.fullSearchInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') executeFullSearch(elements.fullSearchInput.value); });
+  if (elements.genreFilter) elements.genreFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.typeFilter) elements.typeFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.statusFilter) elements.statusFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.sortFilter) elements.sortFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
+  if (elements.searchBackBtn) elements.searchBackBtn.addEventListener('click', function() { showView(elements.libraryView); });
+  document.getElementById('newAnimeBtn').addEventListener('click', function() { showView(elements.searchView); executeFullSearch(''); });
+
   $('#closeModalBtn').addEventListener('click', closeAddModal);
   document.querySelector('[data-close="true"]').addEventListener('click', closeAddModal);
   $('#backToLibraryBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
