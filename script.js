@@ -30,6 +30,8 @@ const state = {
   editingId: null,
   modalReturnFocus: null,
   historyExpanded: {},
+  sharedFilter: 'All',
+  sharedViewAll: false,
   searchGenre: '',
   searchType: '',
   searchStatus: '',
@@ -224,6 +226,23 @@ function refreshPlanCompletion() {
 
 function titleById(id) { return state.anime.find((item) => String(item.id) === String(id)); }
 
+function isAnimeAlreadyInNotebook(item, profile = state.profile) {
+  const activeList = profile === 'jordan'
+    ? state.anime
+    : (JSON.parse(localStorage.getItem(profileStorageKey(STORAGE_KEY)) || '[]') || []).map(normalize).filter(Boolean);
+  const titleSet = [item.title, item.title_english, item.title?.english, item.title?.romaji, item.title?.native, item.slug]
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase());
+  return activeList.some((anime) => {
+    const animeTitles = [anime.title, anime.title_english, anime.title?.english, anime.title?.romaji, anime.title?.native, anime.slug]
+      .filter(Boolean)
+      .map((value) => String(value).toLowerCase());
+    return String(anime.mal_id) === String(item.mal_id)
+      || String(anime.id) === String(item.id)
+      || titleSet.some((title) => animeTitles.includes(title));
+  });
+}
+
 function renderDashboard() {
   const plan = getPlan();
   const progress = planProgress(plan);
@@ -232,9 +251,133 @@ function renderDashboard() {
   const watching = state.anime.filter((item) => item.status === 'Watching');
   const nextMilestone = state.milestones.find((milestone) => milestone > watched) || watched;
   const completedWeeks = state.plans.filter((item) => item.completed).length;
-  elements.dashboardContent.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Personal command center</p><h1>Your Watch Orbit</h1><p class="muted">A calm view of your weekly momentum and the long journey ahead.</p></div><div class="heading-actions"><button class="primary-btn" data-view="plannerView" type="button">Plan this week</button></div></div><div class="backup-tools glass-panel"><div><p class="eyebrow">Data safety</p><strong>Protect your archive</strong><p class="muted">Export saves your anime, plans, streak history, and deferred list. Import merges a backup by title ID.</p></div><div class="backup-actions"><button class="ghost-btn" data-export-backup type="button">Export backup</button><button class="ghost-btn" data-import-backup type="button">Import backup</button><input id="backupFile" class="hidden" type="file" accept="application/json" /></div></div><div class="dashboard-grid"><article class="dashboard-hero glass-panel"><p class="eyebrow">This week's mission</p><h2>${plan ? `${progress.completed} of ${progress.target} anime finished` : 'No mission planned yet'}</h2><p class="muted">${plan ? 'Finish your selected titles to protect the streak.' : 'Choose a few titles and give the week a shape.'}</p><div class="mission-track"><span style="width:${progress.percent}%"></span></div><strong>${Math.round(progress.percent)}% complete</strong></article><article class="stat-panel"><span>Current streak</span><strong>${currentStreak()} weeks</strong><small>${completedWeeks} completed weeks</small></article><article class="stat-panel"><span>Archive progress</span><strong>${watched.toLocaleString()}</strong><small>Next milestone: ${nextMilestone.toLocaleString()}</small></article><article class="stat-panel"><span>Time in orbit</span><strong>${formatHours(watchedHours)}</strong><small>Estimated from episode runtimes</small></article></div><section class="dashboard-section"><div class="section-title"><h2>Continue watching</h2><span>${watching.length} active</span></div><div class="continue-list">${watching.length ? watching.slice(0, 6).map((item) => `<button class="continue-item" data-open-anime="${item.id}" type="button"><img src="${escapeHtml(item.cover)}" alt="" /><span><strong>${escapeHtml(item.title)}</strong><small>Episode ${item.currentEpisode} of ${item.totalEpisodes} · ${formatHours(getWatchHours(item))} total</small></span></button>`).join('') : '<div class="empty-state"><strong>Your orbit is quiet</strong><span>Add a title to start watching.</span></div>'}</div></section><section class="dashboard-section dashboard-columns"><div><div class="section-title"><h2>Backup list</h2><span>${state.deferred.length} deferred</span></div><p class="muted">Titles here are waiting for a future weekly plan, never forgotten.</p></div><div><div class="section-title"><h2>Milestones</h2><span>${state.milestones.join(' · ')}</span></div><label class="milestone-add"><input id="milestoneInput" type="number" min="1" placeholder="Add target" /><button class="ghost-btn" data-add-milestone type="button">Add</button></label></div></section><section class="dashboard-section"><div class="section-title"><h2>Recent activity</h2><span>${state.activity.length} logged episodes</span></div><div class="activity-list">${state.activity.slice(0, 5).map((entry) => `<div><strong>${escapeHtml(titleById(entry.animeId)?.title || 'Unknown title')}</strong><span>Episode ${entry.episode} · ${new Date(entry.date).toLocaleDateString()}</span></div>`).join('') || '<p class="muted">Your manual episode updates will appear here.</p>'}</div></section>`;
-}
+  const statusCounts = ['Watching', 'Watched', 'Plan to Watch', 'Dropped'].map((status) => ({ status, count: state.anime.filter((item) => item.status === status).length }));
+  const statusPalette = ['#8c48ff', '#72dfa5', '#7aa7ff', '#f2789d'];
+  elements.dashboardContent.innerHTML = `<div class="page-heading"><div><p class="eyebrow">Personal command center</p><h1>Your Watch Orbit</h1><p class="muted">A calm view of your weekly momentum and the long journey ahead.</p></div><div class="heading-actions"><button class="primary-btn" data-view="plannerView" type="button">Plan this week</button></div></div><div class="backup-tools glass-panel"><div><p class="eyebrow">Data safety</p><strong>Protect your archive</strong><p class="muted">Export saves your anime, plans, streak history, and deferred list. Import merges a backup by title ID.</p></div><div class="backup-actions"><button class="ghost-btn" data-export-backup type="button">Export backup</button><button class="ghost-btn" data-import-backup type="button">Import backup</button><input id="backupFile" class="hidden" type="file" accept="application/json" /></div></div><div class="dashboard-grid"><article class="dashboard-hero glass-panel"><p class="eyebrow">This week's mission</p><h2>${plan ? `${progress.completed} of ${progress.target} anime finished` : 'No mission planned yet'}</h2><p class="muted">${plan ? 'Finish your selected titles to protect the streak.' : 'Choose a few titles and give the week a shape.'}</p><div class="mission-track"><span style="width:${progress.percent}%"></span></div><strong>${Math.round(progress.percent)}% complete</strong></article><article class="stat-panel"><span>Current streak</span><strong>${currentStreak()} weeks</strong><small>${completedWeeks} completed weeks</small></article><article class="stat-panel"><span>Archive progress</span><strong>${watched.toLocaleString()}</strong><small>Next milestone: ${nextMilestone.toLocaleString()}</small></article><article class="stat-panel"><span>Time in orbit</span><strong>${formatHours(watchedHours)}</strong><small>Estimated from episode runtimes</small></article></div><div class="stats-container"><article class="chart-card glass-panel"><h3>Library mix</h3><canvas id="libraryStatusChart" height="160"></canvas></article><article class="chart-card glass-panel"><h3>Watch rhythm</h3><div class="mini-metrics">${statusCounts.map((entry, index) => `<div class="mini-metric"><span class="mini-dot" style="background:${statusPalette[index]};"></span><strong>${entry.count}</strong><small>${entry.status}</small></div>`).join('')}</div></article></div><section class="dashboard-section"><div class="section-title"><h2>Continue watching</h2><span>${watching.length} active</span></div><div class="continue-list">${watching.length ? watching.slice(0, 4).map((item) => `<button class="continue-item" data-open-anime="${item.id}" type="button"><img src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><span><strong>${escapeHtml(item.title)}</strong><small>${item.currentEpisode}/${item.totalEpisodes} episodes · ${formatHours(getWatchHours(item))}</small></span></button>`).join('') : '<div class="empty-state">You are not currently following any anime.</div>'}</div></section></div>`;
+  if (window.Chart) {
+    const statusChartCanvas = document.getElementById('libraryStatusChart');
+    if (statusChartCanvas) {
+      const existing = Chart.getChart(statusChartCanvas);
+      if (existing) existing.destroy();
+      new Chart(statusChartCanvas, {
+        type: 'doughnut',
+        data: {
+          labels: statusCounts.map((entry) => entry.status),
+          datasets: [{
+            data: statusCounts.map((entry) => entry.count || 0),
+            backgroundColor: statusPalette,
+            borderColor: 'rgba(11, 15, 27, 0.8)',
+            borderWidth: 2,
+            hoverOffset: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '58%',
+          plugins: {
+            legend: { labels: { color: '#eaf1ff', boxWidth: 10, padding: 12 } },
+            tooltip: { enabled: true }
+          }
+        }
+      });
+    }
 
+    setTimeout(() => {
+      const genreBreakdown = getGenreBreakdown();
+      const genreCanvas = document.getElementById('genreChart');
+      if (genreCanvas && genreBreakdown.labels.length > 0) {
+        const existing = Chart.getChart(genreCanvas);
+        if (existing) existing.destroy();
+        new Chart(genreCanvas, {
+          type: 'bar',
+          data: {
+            labels: genreBreakdown.labels,
+            datasets: [{
+              label: 'Anime Count',
+              data: genreBreakdown.data,
+              backgroundColor: genreBreakdown.colors,
+              borderRadius: 8,
+              borderSkipped: false
+            }]
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false }
+            },
+            scales: {
+              x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#a7b0d2' } },
+              y: { grid: { display: false }, ticks: { color: '#a7b0d2' } }
+            }
+          }
+        });
+      }
+
+      const topStudios = getTopStudios();
+      const studioCanvas = document.getElementById('studioChart');
+      if (studioCanvas && topStudios.labels.length > 0) {
+        const existing = Chart.getChart(studioCanvas);
+        if (existing) existing.destroy();
+        new Chart(studioCanvas, {
+          type: 'bar',
+          data: {
+            labels: topStudios.labels,
+            datasets: [{
+              label: 'Titles Produced',
+              data: topStudios.data,
+              backgroundColor: topStudios.colors,
+              borderRadius: 6
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false }
+            },
+            scales: {
+              y: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#a7b0d2' } },
+              x: { grid: { display: false }, ticks: { color: '#a7b0d2' } }
+            }
+          }
+        });
+      }
+
+      const watchTimeByStatus = getWatchTimeByStatus();
+      const watchTimeCanvas = document.getElementById('watchTimeChart');
+      if (watchTimeCanvas && watchTimeByStatus.some(s => s.hours > 0)) {
+        const existing = Chart.getChart(watchTimeCanvas);
+        if (existing) existing.destroy();
+        new Chart(watchTimeCanvas, {
+          type: 'bar',
+          data: {
+            labels: watchTimeByStatus.map(s => s.status),
+            datasets: [{
+              label: 'Hours',
+              data: watchTimeByStatus.map(s => s.hours.toFixed(1)),
+              backgroundColor: ['#8c48ff', '#72dfa5', '#7aa7ff', '#f2789d'],
+              borderRadius: 6
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false }
+            },
+            scales: {
+              y: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#a7b0d2' } },
+              x: { grid: { display: false }, ticks: { color: '#a7b0d2' } }
+            }
+          }
+        });
+      }
+    }, 100);
+  }
+}
 function currentStreak() {
   let streak = 0;
   const cursor = new Date();
@@ -303,10 +446,13 @@ function renderConnections() {
   const opponent = state.profile === 'jordan' ? 'ayden' : 'jordan';
   const myScore = competition ? Number(competition.scores?.[state.profile] || 0) : 0;
   const theirScore = competition ? Number(competition.scores?.[opponent] || 0) : 0;
-  const available = jordanLibrary.filter((item) => !state.anime.some((owned) => String(owned.id) === String(item.id)));
+  const statusOrder = ['All', 'Watching', 'Watched', 'Plan to Watch', 'Dropped'];
+  const visibleShared = jordanLibrary.filter((item) => { const pass = state.sharedFilter === 'All' || item.status === state.sharedFilter; return pass && !state.anime.some((owned) => String(owned.id) === String(item.id) || String(owned.mal_id) === String(item.mal_id)); });
+  const sharedList = state.sharedViewAll ? visibleShared : visibleShared.slice(0, 8);
+  const available = jordanLibrary.filter((item) => !state.anime.some((owned) => String(owned.id) === String(item.id) || String(owned.mal_id) === String(item.mal_id)));
   elements.connectionsContent.innerHTML = `<div class="page-heading">
       <div><p class="eyebrow">Jordan + Ayden</p><h1>Connection Deck</h1><p class="muted">Share recommendations and keep a friendly weekly score.</p></div>
-      <button class="primary-btn" id="viewAllConnectionsBtn" type="button">View all shared anime</button>
+      <button class="primary-btn" id="viewAllConnectionsBtn" type="button">${state.sharedViewAll ? 'Show fewer' : 'View all shared anime'}</button>
     </div>
     <div class="connection-grid">
       <article class="connection-panel glass-panel">
@@ -318,27 +464,11 @@ function renderConnections() {
       <article class="connection-panel glass-panel">
         <p class="eyebrow">Jordan's saved orbit</p><h2>${available.length} titles to borrow</h2>
         <p class="muted">${state.profile === 'jordan' ? 'Your friend will see your saved titles here when they switch profiles.' : 'Add one of Jordan\'s saved anime to your own library.'}</p>
-        <div class="shared-list">${available.length ? available.slice(0, 8).map((item) => `<div class="shared-item"><img src="${escapeHtml(item.cover)}" alt="" /><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)}</small></span>${state.profile === 'ayden' ? `<button class="ghost-btn" data-borrow-anime="${item.id}" type="button">Add to mine</button>` : ''}</div>`).join('') : '<span class="muted">No new shared titles yet.</span>'}</div>
+        <div class="shared-filter-row">${statusOrder.map((status) => `<button class="shared-filter ${state.sharedFilter === status ? 'active' : ''}" data-shared-status="${status}" type="button">${status}</button>`).join('')}</div>
+        <div class="shared-list">${sharedList.length ? sharedList.map((item) => `<div class="shared-item"><img src="${escapeHtml(item.cover)}" alt="" /><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)} · ${formatHours(getWatchHours(item))}</small></span>${state.profile === 'ayden' ? `<button class="ghost-btn" data-borrow-anime="${item.id}" type="button">Add to mine</button>` : ''}</div>`).join('') : '<span class="muted">No shared titles in this queue.</span>'}</div>
       </article>
     </div>
     <div class="connection-note glass-panel"><strong>Shared signal</strong><span>Switch profiles any time. Your library, plans, notes, and goals travel with the selected name.</span></div>`;
-  $('#viewAllConnectionsBtn')?.addEventListener('click', () => {
-    // Navigate to a new sub-view? Or list all right here?
-    // Let's go with showing them all in the existing list.
-    const container = $('.connection-grid');
-    container.innerHTML = `
-      <div class="shared-list-full">
-        ${jordanLibrary.map(item => `
-          <div class="shared-item">
-            <img src="${escapeHtml(item.cover)}" alt="" />
-            <span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.status)}</small></span>
-            ${state.profile === 'ayden' ? `<button class="ghost-btn" data-borrow-anime="${item.id}" type="button">Add</button>` : ''}
-          </div>
-        `).join('')}
-      </div>
-    `;
-    $('#viewAllConnectionsBtn').remove();
-  });
 }
 
 async function loadAnime() {
@@ -428,8 +558,15 @@ async function fetchDiscovery() {
     if (!response.ok) throw new Error('Discovery request failed');
     const data = await response.json();
     const ownedIds = new Set(state.anime.map((item) => String(item.id)));
+    const ownedMalIds = new Set(state.anime.map((item) => String(item.mal_id)).filter(Boolean));
     const ownedTitles = new Set(state.anime.flatMap(getTitleVariants));
-    const results = (data.data?.Page?.media || []).map(normalize).filter((item) => !ownedIds.has(String(item.id)) && !getTitleVariants(item).some((title) => ownedTitles.has(title)));
+    const results = (data.data?.Page?.media || [])
+      .map(normalize)
+      .filter((item) => {
+        if (ownedIds.has(String(item.id)) || ownedMalIds.has(String(item.mal_id))) return false;
+        const titleSet = getTitleVariants(item);
+        return !titleSet.some((title) => ownedTitles.has(title));
+      });
     state.discoveryResults = results;
     elements.discoveryStatus.textContent = `${results.length} random titles found`;
     elements.discoveryList.innerHTML = results.map((item) => `<article class="discovery-card"><img src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" /><div><h2>${escapeHtml(item.title)}</h2><p>${item.episodes || '?'} episodes${item.averageScore ? ` · ${item.averageScore}% score` : ''}${item.totalMinutes ? ` · ${formatHours(item.totalMinutes / 60)}` : ''}</p><button class="discover-add" data-discover-id="${item.id}" type="button">Add to notebook</button></div></article>`).join('');
@@ -462,6 +599,67 @@ function formatHours(hours) {
 function getWatchHours(item) {
   const duration = Number(item.totalMinutes || item.duration) || 24;
   return (Number(item.totalEpisodes) || 1) * duration / 60;
+}
+
+function getGenreBreakdown() {
+  const genreMap = new Map();
+  const genreColorMap = {
+    'Action': '#f2789d',
+    'Adventure': '#ffbd73',
+    'Comedy': '#ffd65a',
+    'Drama': '#72dfa5',
+    'Fantasy': '#8c48ff',
+    'Horror': '#f2789d',
+    'Mystery': '#7aa7ff',
+    'Romance': '#ff69b4',
+    'Sci-Fi': '#70c9dc',
+    'Slice of Life': '#a2f7c1',
+    'Sports': '#ff8a65',
+    'Supernatural': '#b898ff',
+    'Suspense': '#ff6b9d',
+    'Isekai': '#9d6eff',
+    'Shounen': '#ffa500',
+    'Shoujo': '#ff69b4',
+    'Seinen': '#87ceeb',
+    'Josei': '#dda0dd'
+  };
+  state.anime.forEach((item) => {
+    const genre = item.genres?.[0] || 'Unknown';
+    const key = String(genre).trim();
+    genreMap.set(key, (genreMap.get(key) || 0) + 1);
+  });
+  const sortedGenres = [...genreMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  return {
+    labels: sortedGenres.map(([genre]) => genre),
+    data: sortedGenres.map(([, count]) => count),
+    colors: sortedGenres.map(([genre]) => genreColorMap[genre] || '#8c48ff')
+  };
+}
+
+function getTopStudios() {
+  const studioMap = new Map();
+  const studioColors = ['#8c48ff', '#72dfa5', '#7aa7ff', '#ffbd73', '#ff8a65', '#70c9dc'];
+  state.anime.forEach((item) => {
+    const studio = item.studios?.[0] || 'Studio Unknown';
+    const key = String(studio).trim();
+    studioMap.set(key, (studioMap.get(key) || 0) + 1);
+  });
+  const topStudios = [...studioMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  return {
+    labels: topStudios.map(([studio]) => studio.substring(0, 14)),
+    data: topStudios.map(([, count]) => count),
+    colors: studioColors.slice(0, topStudios.length)
+  };
+}
+
+function getWatchTimeByStatus() {
+  const statusHours = ['Watching', 'Watched', 'Plan to Watch', 'Dropped'].map((status) => {
+    const total = state.anime
+      .filter((item) => item.status === status)
+      .reduce((sum, item) => sum + getWatchHours(item), 0);
+    return { status, hours: total };
+  });
+  return statusHours;
 }
 
 function renderStars(rating, interactive = false) {
@@ -515,55 +713,66 @@ function isRateableStatus(status) {
 async function incrementEpisode(item) {
   if (!item || item.status === 'Watched') return;
   if (item.status === 'Dropped') item.status = 'Watching';
+  item.currentEpisode = Math.min(item.totalEpisodes, item.currentEpisode + 1);
+  state.activity.unshift({ animeId: item.id, title: item.title, episode: item.currentEpisode, date: new Date().toISOString() });
+  state.activity = state.activity.slice(0, 5000);
+  const completed = item.status === 'Watching' && item.currentEpisode >= item.totalEpisodes;
+  if (completed) item.status = 'Watched';
+  await persist();
+  refreshPlanCompletion();
+  renderLibrary();
+  renderDashboard();
+  renderCalendar();
+  if (completed) openCompletionForm(item);
+}
 
 async function executeFullSearch(query = '') {
   const genre = elements.genreFilter?.value || '';
   const type = elements.typeFilter?.value || '';
   const status = elements.statusFilter?.value || '';
   const sort = elements.sortFilter?.value || 'popularity';
-  
   state.searchGenre = genre;
   state.searchType = type;
   state.searchStatus = status;
   state.searchSort = sort;
-  
   elements.fullSearchList.innerHTML = '<div class="empty-state">Searching the void...</div>';
-  elements.fullSearchStatus.textContent = query ? `Searching for "${query}"...` : 'Fetching popular anime...';
+  elements.fullSearchStatus.textContent = query ? `Searching for "${query}"...` : 'Loading fresh anime picks...';
 
   try {
     let url;
-    
+    const base = `${JIKAN_URL}/anime?limit=24&sfw=true`;
     if (query) {
-      // Search by title
-      url = `${JIKAN_URL}/anime?q=${encodeURIComponent(query)}&limit=24&sfw=true`;
+      url = `${base}&q=${encodeURIComponent(query)}`;
       if (genre) url += `&genres=${genre}`;
       if (type) url += `&type=${type}`;
       if (status) url += `&status=${status}`;
       if (sort && sort !== 'popularity') url += `&order_by=${sort}&sort=desc`;
+      if (!sort || sort === 'popularity') url += '&order_by=popularity&sort=desc';
     } else {
-      // Browse by filters (popular if no search)
       if (genre) {
-        url = `${JIKAN_URL}/anime?genres=${genre}&limit=24&sfw=true&order_by=popularity&sort=desc`;
-      } else if (sort === 'score') {
-        url = `${JIKAN_URL}/top/anime?limit=24&type=${type || ''}`.replace('type=', type ? 'type=' : '');
+        url = `${base}&genres=${genre}`;
       } else {
         url = `${JIKAN_URL}/top/anime?limit=24`;
       }
-      if (type) url += url.includes('?') ? `&type=${type}` : `?type=${type}`;
-      if (status) url += `&status=${status}`;
+      if (type) url += `${url.includes('?') ? '&' : '?'}type=${type}`;
+      if (status) url += `${url.includes('?') ? '&' : '?'}status=${status}`;
+      if (sort && sort !== 'popularity') {
+        url += `${url.includes('?') ? '&' : '?'}order_by=${sort}&sort=desc`;
+      } else if (!genre) {
+        url += '&order_by=popularity&sort=desc';
+      }
     }
 
     const response = await fetch(url);
     if (!response.ok) throw new Error(`API returned ${response.status}`);
     const data = await response.json();
-    const results = (data.data || []).map(normalize).filter(item => item && item.title);
-    
+    const results = (data.data || []).map(normalize).filter((item) => item && item.title);
     renderSearchResults(results);
-    elements.fullSearchStatus.textContent = results.length 
-      ? (query ? `Found ${results.length} results for "${query}"` : `Showing ${results.length} anime`) 
-      : (query ? 'No results found' : 'Loading...');
-  } catch (err) {
-    console.error('Search failed:', err);
+    elements.fullSearchStatus.textContent = results.length
+      ? (query ? `Found ${results.length} matches for "${query}"` : `Showing ${results.length} fresh picks`)
+      : (query ? 'No results found' : 'No titles match this filter set');
+  } catch (error) {
+    console.error('Search failed:', error);
     elements.fullSearchList.innerHTML = '<div class="empty-state"><strong>Search unavailable</strong><span>The anime database is temporarily unreachable. Try again in a moment.</span></div>';
     elements.fullSearchStatus.textContent = 'Error: Database unreachable';
   }
@@ -576,30 +785,30 @@ function renderSearchResults(results) {
   }
 
   elements.fullSearchList.innerHTML = results.map((item) => {
-    const isAdded = state.anime.some(a => String(a.mal_id) === String(item.mal_id) || String(a.id) === String(item.id));
+    const inNotebook = isAnimeAlreadyInNotebook(item, state.profile);
     const hours = getWatchHours(item);
-    
-    return `<article class="anime-card">
+    const badge = inNotebook ? '<span class="already-added-badge" title="Already in your notebook">✓</span>' : '';
+    const duration = formatHours(hours);
+    return `<article class="anime-card search-card">
       <div class="cover-button">
         <img src="${escapeHtml(item.cover)}" alt="${escapeHtml(item.title)}" />
-        ${isAdded ? '<span class="already-added-badge">IN NOTEBOOK</span>' : ''}
+        ${badge}
         <span class="status-pill">${item.type || 'Anime'} · ${item.episodes || '?'} eps</span>
       </div>
       <div class="card-copy">
         <div class="card-title-row"><h2>${escapeHtml(item.title)}</h2></div>
-        <p class="muted" style="font-size: 0.75rem; margin-bottom: 12px;">${formatHours(hours)} series duration</p>
-        <button class="primary-btn" data-add-result="${item.id}" type="button" ${isAdded ? 'disabled' : ''}>
-          ${isAdded ? 'Already Added' : 'Add to Notebook'}
+        <p class="muted search-runtime">${duration}</p>
+        <button class="primary-btn" data-add-result="${item.id}" type="button" ${inNotebook ? 'disabled' : ''}>
+          ${inNotebook ? 'Already in notebook' : 'Add to Notebook'}
         </button>
       </div>
     </article>`;
   }).join('');
 
-  // Bind buttons
-  elements.fullSearchList.querySelectorAll('[data-add-result]').forEach(btn => {
+  elements.fullSearchList.querySelectorAll('[data-add-result]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.addResult;
-      const item = results.find(r => String(r.id) === String(id));
+      const item = results.find((result) => String(result.id) === String(id));
       if (item) openAddModalFromSearch(item);
     });
   });
@@ -616,18 +825,6 @@ function openAddModalFromSearch(item) {
   bindAddForm(item);
 }
 
-  item.currentEpisode = Math.min(item.totalEpisodes, item.currentEpisode + 1);
-  state.activity.unshift({ animeId: item.id, title: item.title, episode: item.currentEpisode, date: new Date().toISOString() });
-  state.activity = state.activity.slice(0, 5000);
-  const completed = item.status === 'Watching' && item.currentEpisode >= item.totalEpisodes;
-  if (completed) item.status = 'Watched';
-  await persist();
-  refreshPlanCompletion();
-  renderLibrary();
-  renderDashboard();
-  renderCalendar();
-  if (completed) openCompletionForm(item);
-}
 
 function openCompletionForm(item) {
   state.editingId = item.id;
@@ -836,6 +1033,7 @@ function bindEvents() {
     if (view === elements.libraryView) renderLibrary();
     if (view === elements.connectionsView) renderConnections();
   });
+
   elements.calendarContent.addEventListener('click', (event) => {
     const toggle = event.target.closest('[data-history-toggle]');
     if (!toggle) return;
@@ -843,29 +1041,39 @@ function bindEvents() {
     state.historyExpanded[id] = !state.historyExpanded[id];
     renderCalendar();
   });
-  elements.dashboardContent.addEventListener('click', (event) => { const button = event.target.closest('[data-open-anime]'); const viewButton = event.target.closest('[data-view]'); if (button) renderAnimeDetail(titleById(button.dataset.openAnime)); if (viewButton) document.querySelector(`.nav-btn[data-view="${viewButton.dataset.view}"]`)?.click(); });
-  elements.dashboardContent.addEventListener('click', (event) => { if (event.target.closest('[data-export-backup]')) exportBackup(); if (event.target.closest('[data-import-backup]')) $('#backupFile').click(); if (event.target.closest('[data-add-milestone]')) { const value = Number($('#milestoneInput').value); if (value > 0 && !state.milestones.includes(value)) { state.milestones.push(value); state.milestones.sort((first, second) => first - second); savePlanning(); renderDashboard(); } } });
-  elements.dashboardContent.addEventListener('change', (event) => { if (event.target.id === 'backupFile' && event.target.files[0]) importBackup(event.target.files[0]); });
+
+  elements.dashboardContent.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-open-anime]');
+    const viewButton = event.target.closest('[data-view]');
+    if (button) renderAnimeDetail(titleById(button.dataset.openAnime));
+    if (viewButton) document.querySelector(`.nav-btn[data-view="${viewButton.dataset.view}"]`)?.click();
+    if (event.target.closest('[data-export-backup]')) exportBackup();
+    if (event.target.closest('[data-import-backup]')) $('#backupFile').click();
+    if (event.target.closest('[data-add-milestone]')) {
+      const value = Number($('#milestoneInput').value);
+      if (value > 0 && !state.milestones.includes(value)) {
+        state.milestones.push(value);
+        state.milestones.sort((first, second) => first - second);
+        savePlanning();
+        renderDashboard();
+      }
+    }
+  });
+
+  elements.dashboardContent.addEventListener('change', (event) => {
+    if (event.target.id === 'backupFile' && event.target.files[0]) importBackup(event.target.files[0]);
+  });
+
   elements.plannerContent.addEventListener('click', (event) => {
     const save = event.target.closest('[data-save-plan]');
     const restore = event.target.closest('[data-restore-deferred]');
-    if (restore) { state.deferred = state.deferred.filter((id) => String(id) !== restore.dataset.restoreDeferred); savePlanning(); renderPlanner(); return; }
+    if (restore) {
+      state.deferred = state.deferred.filter((id) => String(id) !== restore.dataset.restoreDeferred);
+      savePlanning();
+      renderPlanner();
+      return;
+    }
     if (save) {
-  
-  // New Search View Bindings
-  elements.executeSearchBtn.addEventListener('click', () => executeFullSearch(elements.fullSearchInput.value));
-  elements.fullSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') executeFullSearch(elements.fullSearchInput.value); });
-  [elements.genreFilter, elements.typeFilter, elements.statusFilter, elements.sortFilter].forEach(el => {
-    el.addEventListener('change', () => executeFullSearch(elements.fullSearchInput.value));
-  });
-  elements.searchBackBtn.addEventListener('click', () => showView(elements.libraryView));
-  
-  // Update "Add Anime" button to open this view instead of modal
-  document.getElementById('newAnimeBtn').addEventListener('click', () => {
-    console.log('Search button clicked'); showView(elements.searchView);
-    executeFullSearch(); // Load initial popular list
-  });
-
       const weekKey = getWeekKey();
       const plan = getPlan(weekKey) || { weekKey, animeIds: [] };
       plan.target = Number($('#weeklyTarget').value) || 1;
@@ -877,24 +1085,28 @@ function bindEvents() {
       renderDashboard();
     }
   });
+
   $('#brandBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#discoverBtn').addEventListener('click', openDiscovery);
   $('#discoveryBackBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#refreshDiscoveryBtn').addEventListener('click', fetchDiscovery);
-  if (elements.executeSearchBtn) elements.executeSearchBtn.addEventListener('click', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
-  if (elements.fullSearchInput) elements.fullSearchInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') executeFullSearch(elements.fullSearchInput.value); });
-  if (elements.genreFilter) elements.genreFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
-  if (elements.typeFilter) elements.typeFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
-  if (elements.statusFilter) elements.statusFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
-  if (elements.sortFilter) elements.sortFilter.addEventListener('change', function() { executeFullSearch(elements.fullSearchInput ? elements.fullSearchInput.value : ''); });
-  if (elements.searchBackBtn) elements.searchBackBtn.addEventListener('click', function() { showView(elements.libraryView); });
-  document.getElementById('newAnimeBtn').addEventListener('click', function() { showView(elements.searchView); executeFullSearch(''); });
-
   $('#closeModalBtn').addEventListener('click', closeAddModal);
   document.querySelector('[data-close="true"]').addEventListener('click', closeAddModal);
   $('#backToLibraryBtn').addEventListener('click', () => { showView(elements.libraryView); renderLibrary(); });
   $('#backToAnimeBtn').addEventListener('click', () => { if (state.selectedAnime) renderAnimeDetail(state.selectedAnime); else { showView(elements.libraryView); renderLibrary(); } });
   $('#globalSearch').addEventListener('input', (event) => { state.query = event.target.value; renderLibrary(); });
+
+  elements.executeSearchBtn?.addEventListener('click', () => executeFullSearch(elements.fullSearchInput.value));
+  elements.fullSearchInput?.addEventListener('keydown', (event) => { if (event.key === 'Enter') executeFullSearch(elements.fullSearchInput.value); });
+  [elements.genreFilter, elements.typeFilter, elements.statusFilter, elements.sortFilter].forEach((el) => {
+    el?.addEventListener('change', () => executeFullSearch(elements.fullSearchInput.value));
+  });
+  elements.searchBackBtn?.addEventListener('click', () => showView(elements.libraryView));
+  document.getElementById('newAnimeBtn')?.addEventListener('click', () => {
+    showView(elements.searchView);
+    executeFullSearch('');
+  });
+
   elements.statusTabs.addEventListener('click', (event) => { if (event.target.dataset.status) { state.filter = event.target.dataset.status; renderLibrary(); } });
   elements.statusTabs.addEventListener('change', (event) => { if (event.target.id === 'librarySort') { state.sort = event.target.value; renderLibrary(); } });
   elements.animeList.addEventListener('click', async (event) => { const open = event.target.closest('[data-open-anime]'); const edit = event.target.closest('[data-edit-anime]'); const remove = event.target.closest('[data-remove-anime]'); const increment = event.target.closest('[data-increment-anime]'); if (open) renderAnimeDetail(state.anime.find((item) => String(item.id) === open.dataset.openAnime)); if (edit) openEditForm(state.anime.find((item) => String(item.id) === edit.dataset.editAnime)); if (increment) await incrementEpisode(state.anime.find((item) => String(item.id) === increment.dataset.incrementAnime)); if (remove) { const item = state.anime.find((anime) => String(anime.id) === remove.dataset.removeAnime); if (!item || !window.confirm(`Remove ${item.title} from your archive?`)) return; state.anime = state.anime.filter((anime) => anime.id !== item.id); if (supabaseClient) await supabaseClient.from('anime_library').delete().eq('id', item.id); await persist(); renderLibrary(); } });
@@ -910,18 +1122,33 @@ function bindEvents() {
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && !elements.modal.classList.contains('hidden')) closeAddModal(); });
 
   elements.connectionsContent.addEventListener('click', async (event) => {
+    const sharedFilter = event.target.closest('[data-shared-status]');
+    if (sharedFilter) {
+      state.sharedFilter = sharedFilter.dataset.sharedStatus;
+      state.sharedViewAll = false;
+      renderConnections();
+      return;
+    }
+    if (event.target.closest('#viewAllConnectionsBtn')) {
+      state.sharedViewAll = !state.sharedViewAll;
+      renderConnections();
+      return;
+    }
     if (event.target.closest('[data-start-competition]')) {
       const connections = readConnections();
       connections.competition = { weekKey: getWeekKey(), startedAt: new Date().toISOString(), scores: { jordan: 0, ayden: 0 } };
       saveConnections(connections);
       renderConnections();
+      return;
     }
     const borrow = event.target.closest('[data-borrow-anime]');
     if (borrow) {
       const source = (readConnections().jordanLibrary || []).find((item) => String(item.id) === borrow.dataset.borrowAnime);
       if (!source) return;
       state.anime.unshift(normalize({ ...source, id: crypto.randomUUID(), status: 'Plan to Watch', currentEpisode: 0, notes: `Shared by Jordan: ${source.notes || 'No note'}` }));
-      await persist(); renderConnections(); renderLibrary();
+      await persist();
+      renderConnections();
+      renderLibrary();
     }
   });
   elements.profileSelect.value = state.profile;

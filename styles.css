@@ -108,16 +108,21 @@
 }
 .already-added-badge {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  top: 8px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
   background: var(--red);
-  color: white;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 0.65rem;
-  font-weight: 800;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
   z-index: 2;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  box-shadow: 0 0 12px rgba(242, 120, 157, 0.6), inset 0 0 4px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 900;
+  color: white;
 }
 .total-runtime-badge {
   background: rgba(140, 72, 255, 0.2);
@@ -135,15 +140,50 @@
   margin-top: 30px;
 }
 .chart-card {
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  background: linear-gradient(135deg, rgba(140,72,255,0.1), rgba(122,167,255,0.05));
+  border: 1px solid rgba(140,72,255,0.3);
   border-radius: 16px;
-  padding: 20px;
+  padding: 24px;
+  box-shadow: 0 12px 32px rgba(140,72,255,0.15), inset 0 1px rgba(255,255,255,0.1);
 }
 .chart-card h3 {
   margin-top: 0;
-  margin-bottom: 20px;
-  font-size: 1rem;
+  margin-bottom: 24px;
+  font-size: 1.1rem;
   color: var(--text);
+  font-weight: 600;
+}
+.chart-card canvas {
+  max-height: 280px;
+}
+.mini-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+.mini-metric {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(140,72,255,0.2);
+  border-radius: 10px;
+}
+.mini-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.mini-metric strong {
+  font-size: 1.2rem;
+  color: var(--text);
+}
+.mini-metric small {
+  font-size: 0.65rem;
+  color: var(--muted);
+  text-align: center;
 }
 
